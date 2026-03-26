@@ -11,7 +11,7 @@ from .views import GeoImportView, WilayaViewSet, MoughataaViewSet, CommuneViewSe
 from .views import (
     TypeStructureViewSet,
     NormePersonnelViewSet, NormeServiceViewSet, NormeMaterielViewSet,
-    StructureSanteViewSet
+    # StructureSanteViewSet
 )
 router = DefaultRouter()
 

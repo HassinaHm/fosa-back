@@ -14,7 +14,7 @@ from fosa.views import (
 from fosa.views import (
     TypeStructureViewSet,
     NormePersonnelViewSet, NormeServiceViewSet, NormeMaterielViewSet,
-    StructureSanteViewSet,StructureImportView
+    # StructureSanteViewSet,StructureImportView
 )
 
 router = routers.DefaultRouter()
@@ -32,7 +32,7 @@ router.register("types-structures", TypeStructureViewSet, basename="types-struct
 router.register("normes-personnel", NormePersonnelViewSet, basename="normes-personnel")
 router.register("normes-services", NormeServiceViewSet, basename="normes-services")
 router.register("normes-materiel", NormeMaterielViewSet, basename="normes-materiel")
-router.register("structures", StructureSanteViewSet, basename="structures")
+# router.register("structures", StructureSanteViewSet, basename="structures")
 
 
 urlpatterns = [
@@ -40,6 +40,6 @@ urlpatterns = [
     path("api/", include(router.urls)),
     path("api/auth/", include("accounts.urls")),
     path("api/geo/import/", GeoImportView.as_view(), name="geo-import"),
-    path("api/structures-import/", StructureImportView.as_view(), name="structures-import"),
+    # path("api/structures-import/", StructureImportView.as_view(), name="structures-import"),
 
 ]
