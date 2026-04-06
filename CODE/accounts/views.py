@@ -138,19 +138,6 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 def generate_verification_code():
     return str(random.randint(100000, 999999))
 
@@ -286,48 +273,6 @@ def reset_password_view(request):
             return Response({"error": "Utilisateur introuvable."}, status=404)
 
     return Response(serializer.errors, status=400)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

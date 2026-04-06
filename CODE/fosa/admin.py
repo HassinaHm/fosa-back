@@ -50,6 +50,7 @@ class FOSAAdmin(admin.ModelAdmin):
     autocomplete_fields = ("wilaya_fk", "moughataa_fk", "commune_fk")
     search_fields = (
         "code_etablissement",
+        "structure",
         "nom_fr",
         "nom_ar",
         "responsable",
@@ -79,7 +80,7 @@ from django.contrib import admin
 from .models import (
     Wilaya, Moughataa, Commune,
     TypeStructure, NormePersonnel, NormeService, NormeMateriel,
-    StructureSante, PersonnelStructure, ServiceStructure, MaterielStructure,
+    PersonnelStructure, ServiceStructure, MaterielStructure,
 )
 
 
@@ -148,49 +149,49 @@ class MaterielStructureInline(admin.TabularInline):
 #  STRUCTURE SANTE
 # =========================
 
-@admin.register(StructureSante)
-class StructureSanteAdmin(admin.ModelAdmin):
-    list_display = (
-        "id", "code", "structure",
-        "type_structure",
-        "wilaya_fk", "moughataa_fk", "commune_fk",
-        "etat", "last_updated",
-    )
-    list_filter = ("type_structure", "wilaya_fk", "moughataa_fk", "etat")
-    search_fields = (
-        "code", "structure", "nom_ar",
-        "wilaya", "moughataa", "commune",
-        "wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom",
-    )
-    ordering = ("wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom", "structure")
-    readonly_fields = ("created_at", "last_updated")
+# @admin.register(StructureSante)
+# class StructureSanteAdmin(admin.ModelAdmin):
+#     list_display = (
+#         "id", "code", "structure",
+#         "type_structure",
+#         "wilaya_fk", "moughataa_fk", "commune_fk",
+#         "etat", "last_updated",
+#     )
+#     list_filter = ("type_structure", "wilaya_fk", "moughataa_fk", "etat")
+#     search_fields = (
+#         "code", "structure", "nom_ar",
+#         "wilaya", "moughataa", "commune",
+#         "wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom",
+#     )
+#     ordering = ("wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom", "structure")
+#     readonly_fields = ("created_at", "last_updated")
 
-    # Très pratique si tu as beaucoup de champs
-    fieldsets = (
-        ("Identification", {
-            "fields": ("code", "structure", "nom_ar", "type_structure",  "etat", "responsable")
-        }),
-        ("Localisation", {
-            "fields": ("wilaya_fk", "moughataa_fk", "commune_fk", "wilaya", "moughataa", "commune", "coordonnee_gps")
-        }),
-        ("État / Infrastructures", {
-            "fields": ("etat_batiment",  "cloture", "electricite", "eau", "internet", "cdf", "equipement")
-        }),
-        ("Services / Divers", {
-            "fields": (
-                "fosa_reference", "fosa_plus_proche",
-                "prestation_service", "service_manquant",
-                "besoins",  "pourcentage_activite",
-                "observation", "bailleur", 
-                "source_file",
-            )
-        }),
-        ("Dates", {
-            "fields": ("date_de_creation", "date_de_construction", "created_at", "last_updated")
-        }),
-    )
+#     # Très pratique si tu as beaucoup de champs
+#     fieldsets = (
+#         ("Identification", {
+#             "fields": ("code", "structure", "nom_ar", "type_structure",  "etat", "responsable")
+#         }),
+#         ("Localisation", {
+#             "fields": ("wilaya_fk", "moughataa_fk", "commune_fk", "wilaya", "moughataa", "commune", "coordonnee_gps")
+#         }),
+#         ("État / Infrastructures", {
+#             "fields": ("etat_batiment",  "cloture", "electricite", "eau", "internet", "cdf", "equipement")
+#         }),
+#         ("Services / Divers", {
+#             "fields": (
+#                 "fosa_reference", "fosa_plus_proche",
+#                 "prestation_service", "service_manquant",
+#                 "besoins",  "pourcentage_activite",
+#                 "observation", "bailleur", 
+#                 "source_file",
+#             )
+#         }),
+#         ("Dates", {
+#             "fields": ("date_de_creation", "date_de_construction", "created_at", "last_updated")
+#         }),
+#     )
 
-    inlines = [PersonnelStructureInline, ServiceStructureInline, MaterielStructureInline]
+#     inlines = [PersonnelStructureInline, ServiceStructureInline, MaterielStructureInline]
 
 
 # =========================

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-
+from datetime import timedelta 
 # ============================================================
 #  RÉFÉRENTIEL GÉOGRAPHIQUE (FK propres pour listes React)
 # ============================================================
@@ -53,65 +53,93 @@ class Commune(models.Model):
         return f"{self.nom} ({self.moughataa.nom} / {self.moughataa.wilaya.nom})"
 
 
-# ============================================================
-#  (OPTIONNEL) TON MODÈLE FOSA EXISTANT - CONSERVÉ
-#  (utile si tu as déjà des données et codification)
-# ============================================================
 
 class FOSA(models.Model):
-    TYPE_CHOICES = [
-        ("PS", "Poste de Santé"),
-        ("CS", "Centre de Santé"),
-        ("CH", "Centre hospitalier"),
-        ("DRS", "Direction Régionale de Santé"),
-        ("DAF", "Direction Administrative et Financière"),
-        ("FOND", "FOND"),
-        ("AUTRE", "Autre"),
-    ]
-    PUBLIC_TYPES = {"PS", "CS", "CH"}
+    # --- Identifiants et noms ---
+    code_etablissement = models.CharField(primary_key=True, max_length=100)
+    structure = models.CharField(max_length=255, blank=True, null=True)   
+    nom_fr = models.CharField(max_length=100, blank=True, null=True)       
+    nom_ar = models.CharField(max_length=100, blank=True, null=True)
 
-    nom_fr = models.CharField(max_length=100, verbose_name="Nom (Français)", blank=True, null=True)
-    nom_ar = models.CharField(max_length=100, verbose_name="Nom (Arabe)", blank=True, null=True)
+    # --- Type ---
+    TYPE_CHOICES = [("PS","Poste de Santé"),
+                    ("CS","Centre de Santé"),
+                    ("CH","Centre hospitalier"),
+                    ("DRS","Direction Régionale de Santé"),
+                    ("DAF","Direction Administrative et Financière"),
+                    ("FOND","FOND"),
+                    ("AUTRE","Autre")
+                    ]
     type = models.CharField(max_length=50, choices=TYPE_CHOICES, blank=True, null=True)
 
-    code_etablissement = models.CharField(primary_key=True, max_length=100)
+    # --- Normatif (nouveau) ---
+    type_structure = models.ForeignKey("TypeStructure", on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name="fosas", verbose_name="Type normatif")
 
-    latitude = models.FloatField(blank=True, null=True)
-    longitude = models.FloatField(blank=True, null=True)
+    # --- Géographie (FK propres) ---
+    wilaya_fk = models.ForeignKey("Wilaya", on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
+    moughataa_fk = models.ForeignKey("Moughataa", on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
+    commune_fk = models.ForeignKey("Commune", on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
 
-    adresse = models.CharField(max_length=200, blank=True, null=True)
-    responsable = models.CharField(max_length=100, blank=True, null=True)
-    departement = models.CharField(max_length=100, blank=True, null=True)
-
-    # champs texte (legacy/export)
+    # --- Texte de localisation  ---
     commune = models.CharField(max_length=100, default="Inconnu")
     moughataa = models.CharField(max_length=100, default="Inconnu")
     wilaya = models.CharField(max_length=100, default="Inconnu")
 
-    # FK (propre pour listes)
-    wilaya_fk = models.ForeignKey(Wilaya, on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
-    moughataa_fk = models.ForeignKey(Moughataa, on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
-    commune_fk = models.ForeignKey(Commune, on_delete=models.PROTECT, null=True, blank=True, related_name="fosas")
+    # --- Coordonnées ---
+    latitude = models.FloatField(blank=True, null=True)
+    longitude = models.FloatField(blank=True, null=True)
+    coordonnee_gps = models.CharField(max_length=128, blank=True, null=True)   # fusion possible
 
+    # --- Adresse (construite automatiquement) ---
+    adresse = models.CharField(max_length=200, blank=True, null=True)
+
+    # --- Responsable et département ---
+    responsable = models.CharField(max_length=100, blank=True, null=True)
+    departement = models.CharField(max_length=100, blank=True, null=True)
+
+    # --- Infrastructures (nouveaux) ---
+    etat = models.CharField(max_length=64, blank=True, null=True)                     # fonctionnel ou non
+    etat_batiment = models.CharField(max_length=100, blank=True, null=True)
+    cloture = models.BooleanField(null=True, blank=True)
+    electricite = models.BooleanField(null=True, blank=True)
+    internet = models.BooleanField(null=True, blank=True)
+    eau = models.BooleanField(null=True, blank=True)
+    cdf = models.BooleanField(null=True, blank=True)      # chaîne de froid
+    equipement = models.CharField(max_length=255, null=True, blank=True)
+
+    # --- Dates ---
+    date_de_construction = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    # --- Références FOSA ---
+    fosa_reference = models.CharField(max_length=255, blank=True, null=True)
+    fosa_plus_proche = models.CharField(max_length=255, blank=True, null=True)
+
+    # --- Services et besoins ---
+    prestation_service = models.JSONField(null=True, blank=True, default=list)
+    service_manquant = models.JSONField(null=True, blank=True, default=list)
+    besoins = models.CharField(max_length=255, blank=True, null=True)
+    pourcentage_activite = models.CharField(max_length=50, blank=True, null=True)
+
+    # --- Observations et bailleur ---
+    observation = models.TextField(blank=True, null=True)
+    bailleur = models.TextField(blank=True, null=True)
+    source_file = models.CharField(max_length=255, blank=True, null=True)
+
+    # --- Public / privé ---
     is_public = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["nom_fr"]
-        indexes = [models.Index(fields=["code_etablissement"])]
-
-    def __str__(self):
-        return f"{self.nom_fr or self.nom_ar or 'Sans nom'} ({self.code_etablissement})"
-
-    @property
-    def coordonnees(self):
-        if self.latitude is not None and self.longitude is not None:
-            return f"{self.latitude}, {self.longitude}"
-        return None
+        ordering = ["structure"]
+        indexes = [
+            models.Index(fields=["code_etablissement"]),
+            models.Index(fields=["wilaya_fk", "moughataa_fk", "commune_fk"]),
+        ]
 
     def save(self, *args, **kwargs):
-        self.is_public = (self.type in self.PUBLIC_TYPES)
-
-        # auto-remplissage des champs texte depuis FK
+        # Mise à jour des champs texte depuis FK
         if self.commune_fk:
             self.commune = self.commune_fk.nom
             self.moughataa = self.commune_fk.moughataa.nom
@@ -128,20 +156,25 @@ class FOSA(models.Model):
         if self.commune and self.moughataa and self.wilaya:
             self.adresse = f"{self.commune.strip()} , {self.moughataa.strip()} , {self.wilaya.strip()}"
 
-        # ⚠️ codification : garde ton code existant si tu l’utilises
+        # Si structure n'est pas rempli, utiliser nom_fr (rétrocompatibilité)
+        if not self.structure and self.nom_fr:
+            self.structure = self.nom_fr
+
+        # Génération du code si nécessaire (code_etablissement)
         if not self.code_etablissement:
             from .codification import type_codes, wilaya_codes, moughataa_codes, commune_codes
             t_code = type_codes.get(self.type, "00")
             w_code = wilaya_codes.get(self.wilaya, "00")
             m_code = moughataa_codes.get(self.moughataa, "00")
             c_code = commune_codes.get(self.commune, "00")
-
             prefix = f"{t_code}0{w_code}{m_code}{c_code}"
             count = FOSA.objects.filter(code_etablissement__startswith=prefix).count()
             self.code_etablissement = f"{prefix}{count + 1:02d}"
 
         super().save(*args, **kwargs)
-
+        
+        
+        
 
 class FOSAHistory(models.Model):
     ACTION_CHOICES = [
@@ -174,17 +207,10 @@ FIELD_KEYS = [
     "cas_confirmes",
 ]
 
-
-class Maladie(models.Model):
-    name = models.CharField(max_length=120, unique=True)
-    enabled_fields = models.JSONField(default=list)  # ex: ["deces","cas_confirmes"]
-
-    def __str__(self):
-        return self.name
-    
-from datetime import timedelta
-
 def week_start(d):
+    """Calculate the start of the week (Monday) for a given date"""
+    if not d:
+        return None
     return d - timedelta(days=d.weekday())
 
 class Maladie(models.Model):
@@ -230,7 +256,6 @@ class MaladieReport(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        # ✅ calcule week_start automatiquement
         if self.date:
             self.week_start = week_start(self.date)
         super().save(*args, **kwargs)
@@ -296,140 +321,140 @@ class NormeMateriel(models.Model):
         return f"{self.type_structure.code} - {self.nom_materiel} (min {self.quantite_minimale})"
 
 
-class StructureSante(models.Model):
-    code = models.CharField(
-    max_length=20,
-    unique=True,
-    blank=True,
-    null=True,
-    db_index=True,)
+# class StructureSante(models.Model):
+#     code = models.CharField(
+#     max_length=20,
+#     unique=True,
+#     blank=True,
+#     null=True,
+#     db_index=True,)
 
-    structure = models.CharField("Nom de la structure", max_length=255, blank=True, null=True)
-    type_structure = models.ForeignKey(
-        TypeStructure,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="structures",
-        verbose_name="Type normatif"
-    )
-    etat = models.CharField("État de fonctionnalité", max_length=64, blank=True, null=True)
-    nom_ar = models.CharField("Nom en arabe", max_length=128, blank=True, null=True)
-    coordonnee_gps = models.CharField("Coordonnées", max_length=128, blank=True, null=True)
-    responsable = models.CharField("Responsable", max_length=128, blank=True, null=True)
+#     structure = models.CharField("Nom de la structure", max_length=255, blank=True, null=True)
+#     type_structure = models.ForeignKey(
+#         TypeStructure,
+#         on_delete=models.SET_NULL,
+#         null=True,
+#         blank=True,
+#         related_name="structures",
+#         verbose_name="Type normatif"
+#     )
+#     etat = models.CharField("État de fonctionnalité", max_length=64, blank=True, null=True)
+#     nom_ar = models.CharField("Nom en arabe", max_length=128, blank=True, null=True)
+#     coordonnee_gps = models.CharField("Coordonnées", max_length=128, blank=True, null=True)
+#     responsable = models.CharField("Responsable", max_length=128, blank=True, null=True)
 
-    etat_batiment = models.CharField(max_length=100, blank=True, null=True)
+#     etat_batiment = models.CharField(max_length=100, blank=True, null=True)
 
-    # ---- géographie (FK pour listes)
-    wilaya_fk = models.ForeignKey(Wilaya, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
-    moughataa_fk = models.ForeignKey(Moughataa, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
-    commune_fk = models.ForeignKey(Commune, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
+#     # ---- géographie (FK pour listes)
+#     wilaya_fk = models.ForeignKey(Wilaya, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
+#     moughataa_fk = models.ForeignKey(Moughataa, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
+#     commune_fk = models.ForeignKey(Commune, on_delete=models.PROTECT, null=True, blank=True, related_name="structures_sante")
 
-    date_de_construction = models.CharField(max_length=100, blank=True, null=True)
+#     date_de_construction = models.CharField(max_length=100, blank=True, null=True)
 
-    # ---- infrastructures
-    cloture = models.BooleanField(null=True, blank=True)
-    electricite = models.BooleanField(null=True, blank=True)
-    internet = models.BooleanField(null=True, blank=True)
-    eau = models.BooleanField(null=True, blank=True)
-    cdf = models.BooleanField(null=True, blank=True)  # chaîne de froid
-    equipement = models.CharField(max_length=255,null=True, blank=True)
+#     # ---- infrastructures
+#     cloture = models.BooleanField(null=True, blank=True)
+#     electricite = models.BooleanField(null=True, blank=True)
+#     internet = models.BooleanField(null=True, blank=True)
+#     eau = models.BooleanField(null=True, blank=True)
+#     cdf = models.BooleanField(null=True, blank=True)  # chaîne de froid
+#     equipement = models.CharField(max_length=255,null=True, blank=True)
 
-    # ---- infos diverses
-    fosa_reference = models.CharField(max_length=255, blank=True, null=True)
-    fosa_plus_proche = models.CharField(max_length=255, blank=True, null=True)
+#     # ---- infos diverses
+#     fosa_reference = models.CharField(max_length=255, blank=True, null=True)
+#     fosa_plus_proche = models.CharField(max_length=255, blank=True, null=True)
 
-    prestation_service = models.JSONField(null=True, blank=True, default=list)
-    service_manquant = models.JSONField(null=True, blank=True, default=list)
+#     prestation_service = models.JSONField(null=True, blank=True, default=list)
+#     service_manquant = models.JSONField(null=True, blank=True, default=list)
    
-    besoins = models.CharField(max_length=255, blank=True, null=True)
-    pourcentage_activite = models.CharField(max_length=50, blank=True, null=True)
+#     besoins = models.CharField(max_length=255, blank=True, null=True)
+#     pourcentage_activite = models.CharField(max_length=50, blank=True, null=True)
 
-    observation = models.TextField(blank=True, null=True)
-    bailleur = models.TextField(blank=True, null=True)
+#     observation = models.TextField(blank=True, null=True)
+#     bailleur = models.TextField(blank=True, null=True)
 
-    source_file = models.CharField(max_length=255, blank=True, null=True)
+#     source_file = models.CharField(max_length=255, blank=True, null=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    last_updated = models.DateTimeField(auto_now=True)
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     last_updated = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        verbose_name = "Structure de santé"
-        verbose_name_plural = "Structures de santé"
-        ordering = ["wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom", "structure"]
-    indexes = [
-        models.Index(fields=["wilaya_fk", "moughataa_fk", "commune_fk"]),
-        models.Index(fields=["code"]),
-    ]
+#     class Meta:
+#         verbose_name = "Structure de santé"
+#         verbose_name_plural = "Structures de santé"
+#         ordering = ["wilaya_fk__nom", "moughataa_fk__nom", "commune_fk__nom", "structure"]
+#     indexes = [
+#         models.Index(fields=["wilaya_fk", "moughataa_fk", "commune_fk"]),
+#         models.Index(fields=["code"]),
+#     ]
 
-    def __str__(self):
-         return f"{self.structure or 'Sans nom'} — {self.wilaya_fk.nom if self.wilaya_fk else ''} ({self.code or ''})"
+#     def __str__(self):
+#          return f"{self.structure or 'Sans nom'} — {self.wilaya_fk.nom if self.wilaya_fk else ''} ({self.code or ''})"
 
-    def save(self, *args, **kwargs):
-        # Remplir les champs texte depuis FK (important pour affichage / exports)
-        if self.commune_fk:
-            self.commune = self.commune_fk.nom
-            self.moughataa = self.commune_fk.moughataa.nom
-            self.wilaya = self.commune_fk.moughataa.wilaya.nom
-            self.moughataa_fk = self.commune_fk.moughataa
-            self.wilaya_fk = self.commune_fk.moughataa.wilaya
-        elif self.moughataa_fk:
-            self.moughataa = self.moughataa_fk.nom
-            self.wilaya = self.moughataa_fk.wilaya.nom
-            self.wilaya_fk = self.moughataa_fk.wilaya
-        elif self.wilaya_fk:
-            self.wilaya = self.wilaya_fk.nom
+#     def save(self, *args, **kwargs):
+#         # Remplir les champs texte depuis FK (important pour affichage / exports)
+#         if self.commune_fk:
+#             self.commune = self.commune_fk.nom
+#             self.moughataa = self.commune_fk.moughataa.nom
+#             self.wilaya = self.commune_fk.moughataa.wilaya.nom
+#             self.moughataa_fk = self.commune_fk.moughataa
+#             self.wilaya_fk = self.commune_fk.moughataa.wilaya
+#         elif self.moughataa_fk:
+#             self.moughataa = self.moughataa_fk.nom
+#             self.wilaya = self.moughataa_fk.wilaya.nom
+#             self.wilaya_fk = self.moughataa_fk.wilaya
+#         elif self.wilaya_fk:
+#             self.wilaya = self.wilaya_fk.nom
 
-        creating = self.pk is None
-        super().save(*args, **kwargs)
+#         creating = self.pk is None
+#         super().save(*args, **kwargs)
 
-        if creating and not self.code:
-         self.code = f"FOSA-{self.pk:04d}"  # FOSA-0001
-         super().save(update_fields=["code"])
+#         if creating and not self.code:
+#          self.code = f"FOSA-{self.pk:04d}"  # FOSA-0001
+#          super().save(update_fields=["code"])
 
-    # ===== méthodes conformité (comme ton modèle normes)
-    def manques_personnel(self):
-        if not self.type_structure:
-            return []
-        manques = []
-        normes = self.type_structure.normes_personnel.all()
-        reels = {p.intitule_poste: p.nombre_reel for p in self.personnels.all()}
-        for norme in normes:
-            reel = reels.get(norme.intitule_poste, 0)
-            if reel < norme.nombre_minimal:
-                manques.append({"poste": norme.intitule_poste, "reel": reel, "minimal": norme.nombre_minimal})
-        return manques
+#     # ===== méthodes conformité (comme ton modèle normes)
+#     def manques_personnel(self):
+#         if not self.type_structure:
+#             return []
+#         manques = []
+#         normes = self.type_structure.normes_personnel.all()
+#         reels = {p.intitule_poste: p.nombre_reel for p in self.personnels.all()}
+#         for norme in normes:
+#             reel = reels.get(norme.intitule_poste, 0)
+#             if reel < norme.nombre_minimal:
+#                 manques.append({"poste": norme.intitule_poste, "reel": reel, "minimal": norme.nombre_minimal})
+#         return manques
 
-    def manques_services(self):
-        if not self.type_structure:
-            return []
-        manques = []
-        normes = self.type_structure.normes_services.filter(obligatoire=True)
-        reels = {s.nom_service: s.disponible for s in self.services.all()}
-        for norme in normes:
-            dispo = reels.get(norme.nom_service, False)
-            if not dispo:
-                manques.append(norme.nom_service)
-        return manques
+#     def manques_services(self):
+#         if not self.type_structure:
+#             return []
+#         manques = []
+#         normes = self.type_structure.normes_services.filter(obligatoire=True)
+#         reels = {s.nom_service: s.disponible for s in self.services.all()}
+#         for norme in normes:
+#             dispo = reels.get(norme.nom_service, False)
+#             if not dispo:
+#                 manques.append(norme.nom_service)
+#         return manques
 
-    def manques_materiel(self):
-        if not self.type_structure:
-            return []
-        manques = []
-        normes = self.type_structure.normes_materiel.all()
-        reels = {m.nom_materiel: m.quantite_reelle for m in self.materiels.all()}
-        for norme in normes:
-            reel = reels.get(norme.nom_materiel, 0)
-            if reel < norme.quantite_minimale:
-                manques.append({"materiel": norme.nom_materiel, "reel": reel, "minimal": norme.quantite_minimale})
-        return manques
+#     def manques_materiel(self):
+#         if not self.type_structure:
+#             return []
+#         manques = []
+#         normes = self.type_structure.normes_materiel.all()
+#         reels = {m.nom_materiel: m.quantite_reelle for m in self.materiels.all()}
+#         for norme in normes:
+#             reel = reels.get(norme.nom_materiel, 0)
+#             if reel < norme.quantite_minimale:
+#                 manques.append({"materiel": norme.nom_materiel, "reel": reel, "minimal": norme.quantite_minimale})
+#         return manques
 
-    def est_conforme(self):
-        return (not self.manques_personnel() and not self.manques_services() and not self.manques_materiel())
+#     def est_conforme(self):
+#         return (not self.manques_personnel() and not self.manques_services() and not self.manques_materiel())
 
 
 class PersonnelStructure(models.Model):
-    structure = models.ForeignKey(StructureSante, on_delete=models.CASCADE, related_name="personnels")
+    structure = models.ForeignKey(FOSA, on_delete=models.DO_NOTHING, related_name="personnels")
     intitule_poste = models.CharField(max_length=150)
     nombre_reel = models.PositiveIntegerField(default=0)
 
@@ -443,7 +468,7 @@ class PersonnelStructure(models.Model):
 
 
 class ServiceStructure(models.Model):
-    structure = models.ForeignKey(StructureSante, on_delete=models.CASCADE, related_name="services")
+    structure = models.ForeignKey(FOSA, on_delete=models.DO_NOTHING, related_name="services")
     nom_service = models.CharField(max_length=200)
     disponible = models.BooleanField(default=False)
 
@@ -457,7 +482,7 @@ class ServiceStructure(models.Model):
 
 
 class MaterielStructure(models.Model):
-    structure = models.ForeignKey(StructureSante, on_delete=models.CASCADE, related_name="materiels")
+    structure = models.ForeignKey(FOSA, on_delete=models.DO_NOTHING, related_name="materiels")
     nom_materiel = models.CharField(max_length=200)
     quantite_reelle = models.PositiveIntegerField(default=0)
 
@@ -470,7 +495,7 @@ class MaterielStructure(models.Model):
         return f"{self.structure} - {self.nom_materiel} ({self.quantite_reelle})"
 
 class NormeStructureInfo(models.Model):
-    type_structure = models.OneToOneField(TypeStructure, on_delete=models.CASCADE, related_name="norme_info")
+    type_structure = models.OneToOneField(TypeStructure, on_delete=models.DO_NOTHING, related_name="norme_info")
     population_min = models.PositiveIntegerField(null=True, blank=True)
     population_max = models.PositiveIntegerField(null=True, blank=True)
     superficie_min_m2 = models.PositiveIntegerField(null=True, blank=True)
