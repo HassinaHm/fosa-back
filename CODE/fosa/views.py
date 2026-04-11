@@ -528,7 +528,6 @@ class FOSAViewSet(viewsets.ModelViewSet):
         resp = HttpResponse(dataset.xlsx, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         resp['Content-Disposition'] = 'attachment; filename="fosas_export.xlsx"'
         return resp
-
     # ------------------------------------------------------------
     # Actions pour les normes (personnel, services, matériel)
     # ------------------------------------------------------------
@@ -603,7 +602,99 @@ class FOSAViewSet(viewsets.ModelViewSet):
             )
             saved.append(MaterielStructureSerializer(obj).data)
         return Response(saved, status=200)
-    
+    @action(detail=False, methods=["get"], url_path="conformity-report")
+    def conformity_report(self, request):
+        """
+        Calculate conformity percentage for each structure by comparing:
+        - PersonnelStructure vs NormePersonnel
+        - ServiceStructure vs NormeService
+        - MaterielStructure vs NormeMateriel
+        """
+        fosas = self.get_queryset()
+        conformity_data = []
+
+        for fosa in fosas:
+            if not fosa.type_structure:
+                conformity_data.append({
+                    "code_etablissement": fosa.code_etablissement,
+                    "structure": fosa.structure or fosa.nom_fr,
+                    "type": fosa.type,
+                    "conformity_percentage": 0,
+                    "message": "Type de structure non défini",
+                    "details": {
+                        "personnel": {"met": 0, "total": 0},
+                        "services": {"met": 0, "total": 0},
+                        "materiel": {"met": 0, "total": 0},
+                    }
+                })
+                continue
+
+            # ✅ PERSONNEL: Compare PersonnelStructure with NormePersonnel
+            norme_personnel = NormePersonnel.objects.filter(type_structure=fosa.type_structure)
+            actual_personnel = PersonnelStructure.objects.filter(structure=fosa)
+            
+            personnel_met = 0
+            for norme in norme_personnel:
+                actual = actual_personnel.filter(intitule_poste=norme.intitule_poste).first()
+                if actual and actual.nombre_reel >= norme.nombre_minimal:
+                    personnel_met += 1
+
+            # ✅ SERVICES: Compare ServiceStructure with NormeService
+            norme_services = NormeService.objects.filter(type_structure=fosa.type_structure, obligatoire=True)
+            actual_services = ServiceStructure.objects.filter(structure=fosa)
+            
+            services_met = 0
+            for norme in norme_services:
+                actual = actual_services.filter(nom_service=norme.nom_service, disponible=True).first()
+                if actual:
+                    services_met += 1
+
+            # ✅ MATERIEL: Compare MaterielStructure with NormeMateriel
+            norme_materiel = NormeMateriel.objects.filter(type_structure=fosa.type_structure)
+            actual_materiel = MaterielStructure.objects.filter(structure=fosa)
+            
+            materiel_met = 0
+            for norme in norme_materiel:
+                actual = actual_materiel.filter(nom_materiel=norme.nom_materiel).first()
+                if actual and actual.quantite_reelle >= norme.quantite_minimale:
+                    materiel_met += 1
+
+            # ✅ Calculate total conformity percentage
+            total_normes = norme_personnel.count() + norme_services.count() + norme_materiel.count()
+            total_met = personnel_met + services_met + materiel_met
+
+            if total_normes == 0:
+                conformity_percentage = 0
+                message = "Aucune norme définie"
+            else:
+                conformity_percentage = int((total_met / total_normes) * 100)
+                message = f"{total_met}/{total_normes} normes respectées"
+
+            conformity_data.append({
+                "code_etablissement": fosa.code_etablissement,
+                "structure": fosa.structure or fosa.nom_fr,
+                "type": fosa.type,
+                "wilaya": fosa.wilaya_fk.nom or fosa.wilaya,
+                "moughataa": fosa.moughataa_fk.nom or fosa.moughataa,
+                "conformity_percentage": conformity_percentage,
+                "message": message,
+                "details": {
+                    "personnel": {
+                        "met": personnel_met,
+                        "total": norme_personnel.count(),
+                    },
+                    "services": {
+                        "met": services_met,
+                        "total": norme_services.count(),
+                    },
+                    "materiel": {
+                        "met": materiel_met,
+                        "total": norme_materiel.count(),
+                    },
+                }
+            })
+
+        return Response(conformity_data)
     
     
     
@@ -1028,46 +1119,60 @@ from .models import (
 )
 
 
-class TypeStructureViewSet(viewsets.ReadOnlyModelViewSet):
+class TypeStructureViewSet(viewsets.ModelViewSet):
     queryset = TypeStructure.objects.all().order_by("libelle")
     serializer_class = TypeStructureSerializer
 
-
-class NormePersonnelViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = NormePersonnel.objects.select_related("type_structure").all()
+class NormePersonnelViewSet(viewsets.ModelViewSet):
+    queryset = NormePersonnel.objects.all()
     serializer_class = NormePersonnelSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        ts = self.request.query_params.get("type_structure")
-        if ts:
-            qs = qs.filter(type_structure_id=ts)
+        type_structure = self.request.query_params.get("type_structure")
+        # ✅ FIX: Only filter if type_structure is not null/None
+        if type_structure and type_structure != "null":
+            try:
+                qs = qs.filter(type_structure_id=int(type_structure))
+            except (ValueError, TypeError):
+                pass
         return qs.order_by("intitule_poste")
 
 
-class NormeServiceViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = NormeService.objects.select_related("type_structure").all()
+class NormeServiceViewSet(viewsets.ModelViewSet):
+    queryset = NormeService.objects.all()
     serializer_class = NormeServiceSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        ts = self.request.query_params.get("type_structure")
-        if ts:
-            qs = qs.filter(type_structure_id=ts)
+        type_structure = self.request.query_params.get("type_structure")
+        # ✅ FIX: Only filter if type_structure is not null/None
+        if type_structure and type_structure != "null":
+            try:
+                qs = qs.filter(type_structure_id=int(type_structure))
+            except (ValueError, TypeError):
+                pass
         return qs.order_by("nom_service")
 
 
-class NormeMaterielViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = NormeMateriel.objects.select_related("type_structure").all()
+class NormeMaterielViewSet(viewsets.ModelViewSet):
+    queryset = NormeMateriel.objects.all()
     serializer_class = NormeMaterielSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        ts = self.request.query_params.get("type_structure")
-        if ts:
-            qs = qs.filter(type_structure_id=ts)
+        type_structure = self.request.query_params.get("type_structure")
+        # ✅ FIX: Only filter if type_structure is not null/None
+        if type_structure and type_structure != "null":
+            try:
+                qs = qs.filter(type_structure_id=int(type_structure))
+            except (ValueError, TypeError):
+                pass
         return qs.order_by("nom_materiel")
-
+    
 from django.db.models import Q
 from rest_framework import viewsets
 
