@@ -532,13 +532,13 @@ class FOSAViewSet(viewsets.ModelViewSet):
     # Actions pour les normes (personnel, services, matériel)
     # ------------------------------------------------------------
     @action(detail=True, methods=["get"])
-    def personnels(self, request, pk=None):
+    def personnels(self, request, code_etablissement=None):
         fosa = self.get_object()
         qs = fosa.personnels.all().order_by("intitule_poste")
         return Response(PersonnelStructureSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="personnels/upsert")
-    def personnels_upsert(self, request, pk=None):
+    def personnels_upsert(self, request, code_etablissement=None):
         fosa = self.get_object()
         items = request.data if isinstance(request.data, list) else [request.data]
         saved = []
@@ -556,13 +556,13 @@ class FOSAViewSet(viewsets.ModelViewSet):
         return Response(saved, status=200)
 
     @action(detail=True, methods=["get"])
-    def services(self, request, pk=None):
+    def services(self, request, code_etablissement=None):
         fosa = self.get_object()
         qs = fosa.services.all().order_by("nom_service")
         return Response(ServiceStructureSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="services/upsert")
-    def services_upsert(self, request, pk=None):
+    def services_upsert(self, request, code_etablissement=None):
         fosa = self.get_object()
         items = request.data if isinstance(request.data, list) else [request.data]
         saved = []
@@ -580,13 +580,13 @@ class FOSAViewSet(viewsets.ModelViewSet):
         return Response(saved, status=200)
 
     @action(detail=True, methods=["get"])
-    def materiels(self, request, pk=None):
+    def materiels(self, request, code_etablissement=None):
         fosa = self.get_object()
         qs = fosa.materiels.all().order_by("nom_materiel")
         return Response(MaterielStructureSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="materiels/upsert")
-    def materiels_upsert(self, request, pk=None):
+    def materiels_upsert(self, request, code_etablissement=None):
         fosa = self.get_object()
         items = request.data if isinstance(request.data, list) else [request.data]
         saved = []
