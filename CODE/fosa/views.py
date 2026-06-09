@@ -19,13 +19,121 @@ from .serializers import (
     FOSASerializer, WilayaSerializer, MoughataaSerializer, CommuneSerializer,
     MaladieSerializer, MaladieReportSerializer, TypeStructureSerializer,
     NormePersonnelSerializer, NormeServiceSerializer, NormeMaterielSerializer,
-    PersonnelStructureSerializer, ServiceStructureSerializer, MaterielStructureSerializer,  # ADD THESE
+    PersonnelStructureSerializer, ServiceStructureSerializer, MaterielStructureSerializer,
     FOSAHistorySerializer
 )
 
+from .models import PersonnelStructure, ServiceStructure, MaterielStructure
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================
+# PERSONNEL STRUCTURE VIEWSET
+# ============================================================
+class PersonnelStructureViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing personnel in FOSA structures.
+    Filter by FOSA using ?fosa={code_etablissement}
+    """
+    serializer_class = PersonnelStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure']
+    search_fields = ['intitule_poste', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = PersonnelStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'intitule_poste')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+
+# ============================================================
+# SERVICE STRUCTURE VIEWSET
+# ============================================================
+class ServiceStructureViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing services in FOSA structures.
+    Filter by FOSA using ?fosa={code_etablissement}
+    """
+    serializer_class = ServiceStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure', 'disponible']
+    search_fields = ['nom_service', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = ServiceStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'nom_service')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+
+# ============================================================
+# MATERIEL STRUCTURE VIEWSET
+# ============================================================
+class MaterielStructureViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing materiel (equipment) in FOSA structures.
+    Filter by FOSA using ?fosa={code_etablissement}
+    """
+    serializer_class = MaterielStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure']
+    search_fields = ['nom_materiel', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = MaterielStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'nom_materiel')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
 
 
 # fosa/views_geo.py
@@ -168,51 +276,63 @@ class GeoImportView(APIView):
     permission_classes = [permissions.IsAuthenticated ,CustomModelPermissions, FOSARolePermission]
 
     def post(self, request):
-        f = request.FILES.get("file")
-        update_if_exists = (request.data.get("update_if_exists") or "").lower() == "true"
-        if not f:
-            return Response({"detail": "Aucun fichier reçu (clé 'file')."}, status=400)
+        if 'file' not in request.FILES:
+            return Response({"error": "Aucun fichier fourni"}, status=status.HTTP_400_BAD_REQUEST)
 
-        temp_path = default_storage.save(f"tmp/geo_import/{f.name}", ContentFile(f.read()))
-        absolute = default_storage.path(temp_path)
+        file = request.FILES['file']
+        if not file.name.lower().endswith('.xlsx'):
+            return Response({"error": "Seul le format .xlsx est accepté"}, status=400)
 
         try:
-            stats = import_geo_from_xlsx(absolute, update_if_exists=update_if_exists)
-            return Response({"status": "ok", "update_if_exists": update_if_exists, "stats": stats})
+            result = import_geo_from_xlsx(file)
+            return Response(result, status=200)
         except Exception as e:
-            return Response({"status": "error", "detail": str(e)}, status=400)
-        finally:
-            # nettoyage best-effort
-            try:
-                default_storage.delete(temp_path)
-            except Exception:
-                pass
+            logger.error(f"Erreur import géo: {e}")
+            return Response({"error": str(e)}, status=400)
 
 
 
-# # Serializer principal
-# class FOSASerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = FOSA
-#         fields = [
-#             'nom_fr', 'nom_ar', 'type', 'code_etablissement',
-#             'longitude', 'latitude', 'coordonnees', 'adresse',
-#             'responsable', 'commune', 'moughataa', 'wilaya',
-#             'departement', 'is_public'
-#         ]
-#         read_only_fields = ['code_etablissement', 'coordonnees', 'adresse', 'is_public']
+# Maladie Views
+from .models import Maladie, MaladieReport
 
-#     def validate(self, data):
-#         errors = {}
-#         if not data.get('nom_fr'):
-#             errors['nom_fr'] = "Ce champ est obligatoire"
-#         if not data.get('type'):
-#             errors['type'] = "Ce champ est obligatoire"
-#         if not data.get('wilaya') or not data.get('moughataa') or not data.get('commune'):
-#             errors['localisation'] = "Wilaya, Moughataa et commune sont obligatoires"
-#         if errors:
-#             raise serializers.ValidationError(errors)
-#         return data
+class MaladieViewSet(viewsets.ModelViewSet):
+    queryset = Maladie.objects.all().order_by("name")
+    serializer_class = MaladieSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class MaladieReportViewSet(viewsets.ModelViewSet):
+    serializer_class = MaladieReportSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['wilaya', 'moughataa', 'maladie', 'date']
+    search_fields = ['wilaya__nom', 'moughataa__nom', 'maladie__name']
+
+    def get_queryset(self):
+        qs = MaladieReport.objects.select_related('wilaya', 'moughataa', 'maladie').all()
+        user = self.request.user
+
+        if not user.is_authenticated:
+            return qs.none()
+
+        if user.is_superuser:
+            return qs
+
+        role = getattr(getattr(user, "role", None), "nom", None)
+
+        if role == "Administrateur national":
+            return qs
+
+        if role == "gestionnaire régional":
+            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
+            return qs.filter(wilaya_id__in=wilaya_ids)
+
+        if role == "gestionnaire local":
+            if user.moughataa_fk_id:
+                return qs.filter(moughataa_fk_id=user.moughataa_fk_id)
+            return qs.none()
+
+        return qs.none()
 
 
 # Import/Export
@@ -221,188 +341,7 @@ class GeoImportView(APIView):
 class FOSAResource(resources.ModelResource):
     class Meta:
         model = FOSA
-        import_id_fields = ['code_etablissement']
-        fields = (
-            'code_etablissement',
-            'structure',               # nouveau nom principal
-            'nom_fr',
-            'nom_ar',
-            'type',
-            'type_structure',          # nouveau champ (code ou libellé)
-            'departement',
-            'responsable',
-            'adresse',
-            'commune',
-            'moughataa',
-            'wilaya',
-            'coordonnees',
-            'latitude',
-            'longitude',
-            'is_public',
-            # nouveaux champs de StructureSante
-            'etat',
-            'etat_batiment',
-            'cloture',
-            'electricite',
-            'internet',
-            'eau',
-            'cdf',
-            'equipement',
-            'date_de_construction',
-            'fosa_reference',
-            'fosa_plus_proche',
-            'prestation_service',
-            'service_manquant',
-            'besoins',
-            'pourcentage_activite',
-            'observation',
-            'bailleur',
-            'source_file',
-        )
-        skip_unchanged = True
-        report_skipped = True
-        use_transactions = False
 
-    TYPE_MAPPING = {
-        'poste de santé': 'PS',
-        'PS': 'PS',
-        'centre de santé': 'CS',
-        'CS': 'CS',
-        'CH': 'CH',
-        'direction régionale de santé': 'DRS',
-        'DRS': 'DRS',
-        'direction centrale': 'DAF',
-        'DAF': 'DAF',
-        'FOND': 'FOND',
-        'autres': 'AUTRE',
-    }
-
-    # ------------------------------------------------------------
-    # Helpers de nettoyage
-    # ------------------------------------------------------------
-    def parse_bool(self, value):
-        if value is None:
-            return None
-        s = str(value).strip().lower()
-        if s in ('1', 'true', 'vrai', 'oui', 'y', 'yes'):
-            return True
-        if s in ('0', 'false', 'faux', 'non', 'n', 'no'):
-            return False
-        return None
-
-    def parse_list(self, value):
-        if value is None:
-            return []
-        s = str(value).strip()
-        if not s:
-            return []
-        if s.startswith('[') and s.endswith(']'):
-            try:
-                obj = json.loads(s)
-                if isinstance(obj, list):
-                    return obj
-            except:
-                pass
-        if ';' in s:
-            return [x.strip() for x in s.split(';') if x.strip()]
-        if ',' in s:
-            return [x.strip() for x in s.split(',') if x.strip()]
-        return [s]
-
-    def clean_type(self, raw_value):
-        if not raw_value:
-            return "AUTRE"
-        value = str(raw_value).strip().replace("é", "e")
-        return self.TYPE_MAPPING.get(value, "AUTRE")
-
-    def clean_coordinates(self, row):
-        lat = row.get('latitude', '')
-        lon = row.get('longitude', '')
-        if lat in ('', ',', 'nan', 'none', None, 'None'):
-            row['latitude'] = None
-        else:
-            try:
-                if isinstance(lat, str):
-                    row['latitude'] = float(lat.strip())
-                else:
-                    row['latitude'] = float(lat)
-            except (ValueError, TypeError):
-                raise ValueError(f"Latitude invalide : {lat}")
-
-        if lon in ('', ',', 'nan', 'none', None, 'None'):
-            row['longitude'] = None
-        else:
-            try:
-                if isinstance(lon, str):
-                    row['longitude'] = float(lon.strip())
-                else:
-                    row['longitude'] = float(lon)
-            except (ValueError, TypeError):
-                raise ValueError(f"Longitude invalide : {lon}")
-
-    # ------------------------------------------------------------
-    # Avant importation de chaque ligne
-    # ------------------------------------------------------------
-    def before_import_row(self, row, **kwargs):
-        # Type
-        row['type'] = self.clean_type(row.get('type'))
-
-        # Coordonnées
-        self.clean_coordinates(row)
-
-        # Booléens
-        for bf in ['cloture', 'electricite', 'internet', 'eau', 'cdf']:
-            row[bf] = self.parse_bool(row.get(bf))
-
-        # Listes JSON
-        row['prestation_service'] = self.parse_list(row.get('prestation_service'))
-        row['service_manquant'] = self.parse_list(row.get('service_manquant'))
-
-        # Remplir structure si vide mais nom_fr présent 
-        if not row.get('structure') and row.get('nom_fr'):
-            row['structure'] = row['nom_fr']
-
-        # Validation obligatoire
-        if not row.get('structure') and not row.get('nom_fr') and not row.get('nom_ar'):
-            raise ValueError("Il faut au moins structure, nom_fr ou nom_ar")
-        for field in ['commune', 'moughataa', 'wilaya']:
-            if not row.get(field):
-                raise ValueError(f"Le champ {field} est obligatoire")
-
-    # ------------------------------------------------------------
-    # Avant sauvegarde de l'instance
-    # ------------------------------------------------------------
-    def before_save_instance(self, instance, *args, **kwargs):
-        # Public / privé
-        instance.is_public = instance.type in [
-            'PS', 'CS', 'CH', 'Poste de Santé', 'Centre de Santé', 'Centre hospitalier'
-        ]
-
-        # Résolution du type_structure (par code ou libellé)
-        ts_val = getattr(instance, 'type_structure', None)
-        if ts_val and not isinstance(ts_val, TypeStructure):
-            ts = TypeStructure.objects.filter(code=ts_val).first() \
-                  or TypeStructure.objects.filter(libelle=ts_val).first()
-            instance.type_structure = ts
-
-        # Remplir structure si manquant (par nom_fr)
-        if not instance.structure and instance.nom_fr:
-            instance.structure = instance.nom_fr
-
-    # ------------------------------------------------------------
-    # Récupération de l'instance existante pour update
-    # ------------------------------------------------------------
-    def get_instance(self, instance_loader, row):
-        try:
-            code = row.get('code_etablissement')
-            if code:
-                return self._meta.model.objects.get(code_etablissement=code)
-        except self._meta.model.DoesNotExist:
-            return None
-        return None
-    
-    
-    
 
 class FOSAViewSet(viewsets.ModelViewSet):
     serializer_class = FOSASerializer
@@ -458,7 +397,6 @@ class FOSAViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         return qs.filter(is_public=True)
-
     # ------------------------------------------------------------
     # Historique
     # ------------------------------------------------------------
@@ -488,10 +426,9 @@ class FOSAViewSet(viewsets.ModelViewSet):
             action=action,
             changes=changes
         )
-
-    # ------------------------------------------------------------
+    # ============================================================
     # Import / Export
-    # ------------------------------------------------------------
+    # ============================================================
     @action(detail=False, methods=['post'])
     def import_data(self, request):
         if 'file' not in request.FILES:
@@ -528,9 +465,9 @@ class FOSAViewSet(viewsets.ModelViewSet):
         resp = HttpResponse(dataset.xlsx, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         resp['Content-Disposition'] = 'attachment; filename="fosas_export.xlsx"'
         return resp
-    # ------------------------------------------------------------
+    # ============================================================
     # Actions pour les normes (personnel, services, matériel)
-    # ------------------------------------------------------------
+    # ============================================================
     @action(detail=True, methods=["get"])
     def personnels(self, request, code_etablissement=None):
         fosa = self.get_object()
@@ -602,6 +539,7 @@ class FOSAViewSet(viewsets.ModelViewSet):
             )
             saved.append(MaterielStructureSerializer(obj).data)
         return Response(saved, status=200)
+    
     @action(detail=False, methods=["get"], url_path="conformity-report")
     def conformity_report(self, request):
         """
@@ -630,6 +568,7 @@ class FOSAViewSet(viewsets.ModelViewSet):
                 continue
 
             # ✅ PERSONNEL: Compare PersonnelStructure with NormePersonnel
+            from .models import NormePersonnel
             norme_personnel = NormePersonnel.objects.filter(type_structure=fosa.type_structure)
             actual_personnel = PersonnelStructure.objects.filter(structure=fosa)
             
@@ -640,6 +579,7 @@ class FOSAViewSet(viewsets.ModelViewSet):
                     personnel_met += 1
 
             # ✅ SERVICES: Compare ServiceStructure with NormeService
+            from .models import NormeService
             norme_services = NormeService.objects.filter(type_structure=fosa.type_structure, obligatoire=True)
             actual_services = ServiceStructure.objects.filter(structure=fosa)
             
@@ -650,6 +590,7 @@ class FOSAViewSet(viewsets.ModelViewSet):
                     services_met += 1
 
             # ✅ MATERIEL: Compare MaterielStructure with NormeMateriel
+            from .models import NormeMateriel
             norme_materiel = NormeMateriel.objects.filter(type_structure=fosa.type_structure)
             actual_materiel = MaterielStructure.objects.filter(structure=fosa)
             
@@ -659,65 +600,36 @@ class FOSAViewSet(viewsets.ModelViewSet):
                 if actual and actual.quantite_reelle >= norme.quantite_minimale:
                     materiel_met += 1
 
-            # ✅ Calculate total conformity percentage
-            total_normes = norme_personnel.count() + norme_services.count() + norme_materiel.count()
+            # ✅ Calculate overall conformity
+            total_norms = len(norme_personnel) + len(norme_services) + len(norme_materiel)
             total_met = personnel_met + services_met + materiel_met
-
-            if total_normes == 0:
-                conformity_percentage = 0
-                message = "Aucune norme définie"
-            else:
-                conformity_percentage = int((total_met / total_normes) * 100)
-                message = f"{total_met}/{total_normes} normes respectées"
+            conformity_percentage = (total_met / total_norms * 100) if total_norms > 0 else 0
 
             conformity_data.append({
                 "code_etablissement": fosa.code_etablissement,
                 "structure": fosa.structure or fosa.nom_fr,
                 "type": fosa.type,
-                "wilaya": fosa.wilaya_fk.nom or fosa.wilaya,
-                "moughataa": fosa.moughataa_fk.nom or fosa.moughataa,
-                "conformity_percentage": conformity_percentage,
-                "message": message,
+                "conformity_percentage": round(conformity_percentage, 2),
+                "message": f"Conformité: {total_met}/{total_norms} normes respectées",
                 "details": {
-                    "personnel": {
-                        "met": personnel_met,
-                        "total": norme_personnel.count(),
-                    },
-                    "services": {
-                        "met": services_met,
-                        "total": norme_services.count(),
-                    },
-                    "materiel": {
-                        "met": materiel_met,
-                        "total": norme_materiel.count(),
-                    },
+                    "personnel": {"met": personnel_met, "total": len(norme_personnel)},
+                    "services": {"met": services_met, "total": len(norme_services)},
+                    "materiel": {"met": materiel_met, "total": len(norme_materiel)},
                 }
             })
 
         return Response(conformity_data)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
+
 # Vue Historique
 class FOSAHistorySerializer(serializers.ModelSerializer):
-    fosa_code_etablissement = serializers.ReadOnlyField(source='fosa.code_etablissement')
-    fosa_nom_fr = serializers.ReadOnlyField(source='fosa.nom_fr')
-    fosa_nom_ar = serializers.ReadOnlyField(source='fosa.nom_ar')
-    username = serializers.ReadOnlyField(source='user.email')
+    username = serializers.CharField(source='user.username', read_only=True)
+    fosa_code = serializers.CharField(source='fosa.code_etablissement', read_only=True)
 
     class Meta:
         model = FOSAHistory
-        fields = ['fosa_code_etablissement', 'fosa_nom_fr', 'fosa_nom_ar',
-                  'username', 'action', 'changes', 'timestamp']
-
+        fields = ['id', 'fosa', 'fosa_code', 'user', 'username', 'action', 'changes', 'created_at']
+        read_only_fields = ['id', 'created_at']
 
 
 class FOSAHistoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -753,6 +665,7 @@ class FOSAHistoryViewSet(viewsets.ReadOnlyModelViewSet):
 
         # --- Gestionnaire local ---
         if role == "gestionnaire local":
+            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
             wilaya_noms = list(user.wilayas.values_list("nom", flat=True))
 
             q = qs.filter(
@@ -767,6 +680,7 @@ class FOSAHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         # --- Utilisateurs publics ---
         return qs.filter(fosa__is_public=True)
 
+
 import csv, io, json
 from django.db import transaction
 from rest_framework.views import APIView
@@ -775,349 +689,27 @@ from rest_framework.response import Response
 from rest_framework import permissions
 
 def to_bool(v):
-    if v is None:
-        return None
-    s = str(v).strip().lower()
-    if s in ("1", "true", "vrai", "oui", "y", "yes"):
-        return True
-    if s in ("0", "false", "faux", "non", "n", "no"):
-        return False
-    return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.lower() in ('true', '1', 'oui', 'yes', 'o')
+    return bool(v)
 
 def to_list(v):
-    if v is None:
-        return []
     if isinstance(v, list):
         return v
-    s = str(v).strip()
-    if not s:
-        return []
-
-    if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+    if isinstance(v, str):
         try:
-            obj = json.loads(s)
-            return obj if isinstance(obj, list) else []
-        except Exception:
-            pass
+            return json.loads(v)
+        except:
+            return [x.strip() for x in v.split(',')]
+    return []
 
-    if ";" in s:
-        return [x.strip() for x in s.split(";") if x.strip()]
-    if "," in s:
-        return [x.strip() for x in s.split(",") if x.strip()]
 
-    return [s]
-
-# class StructureImportView(APIView):
-#     parser_classes = [MultiPartParser]
-#     permission_classes = [permissions.IsAuthenticated]  # (garde simple pour tester)
-
-#     def post(self, request):
-#         f = request.FILES.get("file")
-#         if not f:
-#             return Response({"detail": "Aucun fichier reçu (clé 'file')"}, status=400)
-
-#         raw = f.read()
-#         try:
-#             text = raw.decode("utf-8")
-#         except UnicodeDecodeError:
-#             text = raw.decode("ISO-8859-1", errors="replace")
-
-#         # IMPORTANT: si ton CSV est généré par Excel FR => souvent ; sinon mets delimiter=","
-#         reader = csv.DictReader(io.StringIO(text), delimiter=";")
-
-#         allowed = {
-#             "code","structure","etat","nom_ar","coordonnee_gps","responsable","etat_batiment",
-#             "date_de_construction","cloture","electricite","internet","eau","cdf","equipement",
-#             "fosa_reference","fosa_plus_proche","besoins","pourcentage_activite",
-#             "observation","bailleur","source_file",
-#         }
-
-#         created, updated, skipped = 0, 0, 0
-#         errors = []
-
-#         with transaction.atomic():
-#             for i, row in enumerate(reader, start=2):
-#                 try:
-#                     wilaya_name = (row.get("wilaya") or "").strip()
-#                     moughataa_name = (row.get("moughataa") or "").strip()
-#                     commune_name = (row.get("commune") or "").strip()
-
-#                     wilaya = Wilaya.objects.filter(nom__iexact=wilaya_name).first() if wilaya_name else None
-#                     moughataa = None
-#                     commune = None
-
-#                     if wilaya and moughataa_name:
-#                         moughataa = Moughataa.objects.filter(wilaya=wilaya, nom__iexact=moughataa_name).first()
-
-#                     if moughataa and commune_name:
-#                         commune = Commune.objects.filter(moughataa=moughataa, nom__iexact=commune_name).first()
-
-#                     ts = None
-#                     t = (row.get("type") or "").strip()
-#                     if t:
-#                         ts = TypeStructure.objects.filter(code__iexact=t).first() or TypeStructure.objects.filter(libelle__iexact=t).first()
-
-#                     data = {k: row.get(k) for k in allowed if k in row}
-
-#                     for bfield in ("cloture", "electricite", "internet", "eau", "cdf"):
-#                         if bfield in data:
-#                             data[bfield] = to_bool(data[bfield])
-
-#                     data["prestation_service"] = to_list(row.get("prestation_service"))
-#                     data["service_manquant"] = to_list(row.get("service_manquant"))
-
-#                     data["wilaya_fk"] = wilaya
-#                     data["moughataa_fk"] = moughataa
-#                     data["commune_fk"] = commune
-#                     data["type_structure"] = ts
-
-#                     code = (row.get("code") or "").strip()
-
-#                     if code:
-#                         obj, is_created = StructureSante.objects.update_or_create(
-#                             code=code,
-#                             defaults=data
-#                         )
-#                     else:
-#                         obj = StructureSante.objects.create(**data)
-#                         is_created = True
-
-#                     created += 1 if is_created else 0
-#                     updated += 0 if is_created else 1
-
-#                 except Exception as e:
-#                     skipped += 1
-#                     errors.append({"line": i, "error": str(e)})
-
-#         return Response({
-#             "status": "ok",
-#             "created": created,
-#             "updated": updated,
-#             "skipped": skipped,
-#             "errors": errors[:50],
-#         })
-
-from .models import Maladie, MaladieReport
-from .serializers import MaladieSerializer, MaladieReportSerializer
-
-class MaladieViewSet(viewsets.ModelViewSet):
-    queryset = Maladie.objects.all().order_by("name")
-    serializer_class = MaladieSerializer
-    parser_classes = [JSONParser, FormParser, MultiPartParser]
-    permission_classes = [permissions.IsAuthenticated ,CustomModelPermissions, FOSARolePermission]
-
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.http import HttpResponse
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from datetime import datetime, timedelta
-import io
-
-class MaladieReportViewSet(viewsets.ModelViewSet):
-    queryset = MaladieReport.objects.select_related("wilaya", "moughataa", "maladie").all()
-    serializer_class = MaladieReportSerializer
-    parser_classes = [JSONParser, FormParser, MultiPartParser]
-    permission_classes = [permissions.IsAuthenticated, CustomModelPermissions, FOSARolePermission]
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-
-        date = self.request.query_params.get("date")
-        date_start = self.request.query_params.get("date_start")
-        date_end = self.request.query_params.get("date_end")
-        wilaya = self.request.query_params.get("wilaya")
-        moughataa = self.request.query_params.get("moughataa")
-        maladie = self.request.query_params.get("maladie")
-
-        if date:
-            qs = qs.filter(date=date)
-        if date_start and date_end:
-            qs = qs.filter(date__range=[date_start, date_end])
-
-        if wilaya:
-            qs = qs.filter(wilaya_id=wilaya)
-        if moughataa:
-            qs = qs.filter(moughataa_id=moughataa)
-        if maladie:
-            qs = qs.filter(maladie_id=maladie)
-
-        return qs.order_by("date", "wilaya_id", "moughataa_id", "maladie_id")
-
-    @action(detail=False, methods=["post"], url_path="upsert")
-    def upsert(self, request):
-        """
-        Upsert par (date, wilaya, moughataa, disease).
-        Si existe => update (remplacer)
-        Sinon => create
-        """
-        key_fields = ["date", "wilaya", "moughataa", "maladie"]
-        missing = [f for f in key_fields if f not in request.data]
-        if missing:
-            return Response({"detail": f"Champs manquants: {missing}"}, status=400)
-
-        obj = MaladieReport.objects.filter(
-            date=request.data["date"],
-            wilaya_id=request.data["wilaya"],
-            moughataa_id=request.data["moughataa"],
-            maladie_id=request.data["maladie"],
-        ).first()
-
-        if obj:
-            ser = self.get_serializer(obj, data=request.data, partial=False)
-            ser.is_valid(raise_exception=True)
-            ser.save()
-            return Response(ser.data, status=status.HTTP_200_OK)
-
-        ser = self.get_serializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        ser.save()
-        return Response(ser.data, status=status.HTTP_201_CREATED)
-
-    # ✅ NEW EXPORT ENDPOINT
-    @action(detail=False, methods=["get"], url_path="export-weekly")
-    def export_weekly(self, request):
-        """
-        Export MaladieReport as weekly Excel report
-        Query params:
-        - date_start: YYYY-MM-DD (Monday of week)
-        - date_end: YYYY-MM-DD (Sunday of week)
-        """
-        date_start = request.query_params.get("date_start")
-        date_end = request.query_params.get("date_end")
-
-        if not date_start or not date_end:
-            return Response(
-                {"detail": "date_start and date_end are required (format: YYYY-MM-DD)"},
-                status=400
-            )
-
-        try:
-            start = datetime.strptime(date_start, "%Y-%m-%d").date()
-            end = datetime.strptime(date_end, "%Y-%m-%d").date()
-        except ValueError:
-            return Response({"detail": "Invalid date format. Use YYYY-MM-DD"}, status=400)
-
-        # Get week number
-        week_num = start.isocalendar()[1]
-
-        # Fetch reports for this week
-        reports = MaladieReport.objects.filter(
-            date__range=[start, end]
-        ).select_related("wilaya", "moughataa", "maladie").order_by(
-            "wilaya__nom", "moughataa__nom", "maladie__name"
-        )
-
-        # Create workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Rapport Hebdomadaire"
-
-        # ✅ Styling
-        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        title_font = Font(bold=True, size=12)
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
-        # ✅ Title Row
-        ws.merge_cells("A1:H1")
-        title_cell = ws["A1"]
-        title_cell.value = f"NOTIFICATION DES MALADIES ET EVENEMENTS"
-        title_cell.font = title_font
-        title_cell.alignment = center_align
-
-        # ✅ Week Info Row
-        ws.merge_cells("A2:H2")
-        week_cell = ws["A2"]
-        week_cell.value = f"Sem. Épid. N° : {week_num:02d}  du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}"
-        week_cell.font = Font(bold=True, size=10)
-        week_cell.alignment = center_align
-
-        # ✅ Statistics (Placeholder)
-        row = 4
-        stats = [
-            ("Nombre de rapports attendus des Moughataas", len(set(reports.values_list("moughataa_id", flat=True)))),
-            ("Nombre de rapports reçus des Moughataas", len(set(reports.values_list("moughataa_id", flat=True)))),
-            ("Nombre de rapports reçus à temps des Moughataas", len(set(reports.values_list("moughataa_id", flat=True)))),
-        ]
-
-        for stat_label, stat_value in stats:
-            ws[f"A{row}"] = stat_label
-            ws[f"B{row}"] = stat_value
-            ws[f"C{row}"] = f"{100}%"
-            row += 1
-
-        # ✅ Headers
-        row = 8
-        headers = ["Wilaya", "Moughataa", "Maladie", "Cas Suspects", "Décès", "Cas Prélevés", "Cas Testés", "Cas Confirmés"]
-        
-        for col_idx, header in enumerate(headers, start=1):
-            cell = ws.cell(row=row, column=col_idx)
-            cell.value = header
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = center_align
-            cell.border = border
-
-        # ✅ Data Rows
-        row = 9
-        for report in reports:
-            ws.cell(row=row, column=1).value = report.wilaya.nom
-            ws.cell(row=row, column=2).value = report.moughataa.nom
-            ws.cell(row=row, column=3).value = report.maladie.name
-            ws.cell(row=row, column=4).value = report.cas_suspects or 0
-            ws.cell(row=row, column=5).value = report.deces or 0
-            ws.cell(row=row, column=6).value = report.cas_preleves or 0
-            ws.cell(row=row, column=7).value = report.cas_testes or 0
-            ws.cell(row=row, column=8).value = report.cas_confirmes or 0
-
-            # Apply borders
-            for col in range(1, 9):
-                ws.cell(row=row, column=col).border = border
-                ws.cell(row=row, column=col).alignment = center_align
-
-            row += 1
-
-        # ✅ Set column widths
-        ws.column_dimensions["A"].width = 20
-        ws.column_dimensions["B"].width = 20
-        ws.column_dimensions["C"].width = 30
-        for col in ["D", "E", "F", "G", "H"]:
-            ws.column_dimensions[col].width = 15
-
-        # ✅ Generate file
-        output = io.BytesIO()
-        wb.save(output)
-        output.seek(0)
-
-        filename = f"Rapport_Epid_Sem_{week_num:02d}_{start.strftime('%Y%m%d')}_au_{end.strftime('%Y%m%d')}.xlsx"
-
-        response = HttpResponse(
-            output.getvalue(),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        response["Content-Disposition"] = f"attachment; filename={filename}"
-        return response
-    
-    
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-
-from .models import (
-    TypeStructure,
-    NormePersonnel, NormeService, NormeMateriel,
-    # StructureSante,
-    PersonnelStructure, ServiceStructure, MaterielStructure
-)
-
+# ============================================================
+# NORMS VIEWSETS (Normes)
+# ============================================================
+from .models import NormePersonnel, NormeService, NormeMateriel
 
 class TypeStructureViewSet(viewsets.ModelViewSet):
     queryset = TypeStructure.objects.all().order_by("libelle")
@@ -1187,119 +779,3 @@ from rest_framework import viewsets
 
 #     def get_queryset(self):
 #         qs = super().get_queryset()
-
-#         # accept BOTH names (so React can send wilaya or wilaya_fk)
-#         wilaya = self.request.query_params.get("wilaya_fk") or self.request.query_params.get("wilaya")
-#         moughataa = self.request.query_params.get("moughataa_fk") or self.request.query_params.get("moughataa")
-#         type_structure = self.request.query_params.get("type_structure")
-#         q = self.request.query_params.get("q")
-
-        
-#         if wilaya:
-#             qs = qs.filter(
-#                 wilaya_fk_id=wilaya if str(wilaya).isdigit() else None
-#             ) if str(wilaya).isdigit() else qs.filter(wilaya_fk__nom__iexact=wilaya)
-
-#         if moughataa:
-#             qs = qs.filter(
-#                 moughataa_fk_id=moughataa if str(moughataa).isdigit() else None
-#             ) if str(moughataa).isdigit() else qs.filter(moughataa_fk__nom__iexact=moughataa)
-
-       
-#         if type_structure:
-#             qs = qs.filter(type_structure_id=type_structure)
-
-#         if q:
-#             qs = qs.filter(
-#                 Q(code__icontains=q) |
-#                 Q(structure__icontains=q) |
-#                 Q(wilaya__icontains=q) |
-#                 Q(moughataa__icontains=q) |
-#                 Q(commune__icontains=q) |
-#                 Q(responsable__icontains=q)
-#             )
-
-#         return qs.order_by("wilaya_fk__nom", "moughataa_fk__nom", "structure")
-#     # -----------------------------
-#     # Tes actions existantes
-#     # -----------------------------
-#     @action(detail=True, methods=["get"])
-#     def personnels(self, request, pk=None):
-#         structure = self.get_object()
-#         qs = structure.personnels.all().order_by("intitule_poste")
-#         return Response(PersonnelStructureSerializer(qs, many=True).data)
-
-#     @action(detail=True, methods=["post"], url_path="personnels/upsert")
-#     def personnels_upsert(self, request, pk=None):
-#         structure = self.get_object()
-#         items = request.data if isinstance(request.data, list) else [request.data]
-
-#         saved = []
-#         for it in items:
-#             intitule = it.get("intitule_poste")
-#             nombre = it.get("nombre_reel", 0)
-#             if not intitule:
-#                 return Response({"detail": "intitule_poste manquant"}, status=400)
-
-#             obj, _ = PersonnelStructure.objects.update_or_create(
-#                 structure=structure,
-#                 intitule_poste=intitule,
-#                 defaults={"nombre_reel": nombre},
-#             )
-#             saved.append(PersonnelStructureSerializer(obj).data)
-
-#         return Response(saved, status=status.HTTP_200_OK)
-
-#     @action(detail=True, methods=["get"])
-#     def services(self, request, pk=None):
-#         structure = self.get_object()
-#         qs = structure.services.all().order_by("nom_service")
-#         return Response(ServiceStructureSerializer(qs, many=True).data)
-
-#     @action(detail=True, methods=["post"], url_path="services/upsert")
-#     def services_upsert(self, request, pk=None):
-#         structure = self.get_object()
-#         items = request.data if isinstance(request.data, list) else [request.data]
-
-#         saved = []
-#         for it in items:
-#             nom = it.get("nom_service")
-#             dispo = bool(it.get("disponible", False))
-#             if not nom:
-#                 return Response({"detail": "nom_service manquant"}, status=400)
-
-#             obj, _ = ServiceStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_service=nom,
-#                 defaults={"disponible": dispo},
-#             )
-#             saved.append(ServiceStructureSerializer(obj).data)
-
-#         return Response(saved, status=status.HTTP_200_OK)
-
-#     @action(detail=True, methods=["get"])
-#     def materiels(self, request, pk=None):
-#         structure = self.get_object()
-#         qs = structure.materiels.all().order_by("nom_materiel")
-#         return Response(MaterielStructureSerializer(qs, many=True).data)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/upsert")
-#     def materiels_upsert(self, request, pk=None):
-#         structure = self.get_object()
-#         items = request.data if isinstance(request.data, list) else [request.data]
-
-#         saved = []
-#         for it in items:
-#             nom = it.get("nom_materiel")
-#             qte = it.get("quantite_reelle", 0)
-#             if not nom:
-#                 return Response({"detail": "nom_materiel manquant"}, status=400)
-
-#             obj, _ = MaterielStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_materiel=nom,
-#                 defaults={"quantite_reelle": qte},
-#             )
-#             saved.append(MaterielStructureSerializer(obj).data)
-
-#         return Response(saved, status=status.HTTP_200_OK)
