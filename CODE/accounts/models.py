@@ -4,6 +4,7 @@ from django.contrib.auth.models import (
     AbstractBaseUser, BaseUserManager, PermissionsMixin, Permission
 )
 from django.utils import timezone
+from django.conf import settings
 
 from fosa.models import Wilaya
 
@@ -58,7 +59,20 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
-
+    #========================mobile===========================
+    name = models.CharField(max_length=200, blank=True, null=True, verbose_name="Nom complet")
+    matricule = models.CharField(max_length=10, blank=True, null=True, unique=True,verbose_name="Matricule")
+    status = models.CharField(max_length=20, choices=[
+        ("pending",  "En attente"),
+        ("approved", "Approuvé"),
+        ("refused",  "Refusé"),
+    ],default="pending",verbose_name="Statut du compte")
+    pin_code = models.CharField(max_length=4, blank=True, null=True, verbose_name="Code PIN")
+    phone_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="Numéro de téléphone")
+    fosa_mobile = models.ForeignKey("fosa.FOSA", on_delete=models.SET_NULL, null=True, blank=True,
+    related_name="rapporteurs", verbose_name="FOSA mobile")
+    fcm_token = models.CharField(max_length=500, blank=True, null=True, verbose_name="FCM Token")
+    #==============================================================================
     # Rôle dynamique (RBAC)
     role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name="users")
 
@@ -109,6 +123,126 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Autorise l'accès au module admin si is_staff
         return self.is_staff
 
+#============================mobile=============================
+class AccessRequest(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "En attente"),
+        ("approved", "Approuvé"),
+        ("refused", "Refusé"),
+    ]
+
+    name = models.CharField(max_length=200, verbose_name="Nom")
+    matricule = models.CharField(max_length=10, verbose_name="Matricule")
+    email = models.EmailField(null=True, blank=True)
+    phone_number = models.CharField(max_length=20, null=True, blank=True)
+
+    wilaya = models.ForeignKey("fosa.Wilaya", on_delete=models.CASCADE)
+    moughataa = models.ForeignKey("fosa.Moughataa", on_delete=models.CASCADE)
+    fosa = models.ForeignKey("fosa.FOSA", on_delete=models.CASCADE)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="reviewed_requests"
+    )
+    generated_pin = models.CharField(max_length=4, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.matricule}) - {self.status}"
+
+    def approve(self, admin_user):
+        import random
+        import string
+        from django.utils import timezone
+        from django.contrib.auth import get_user_model
+        from django.core.mail import send_mail
+        from django.conf import settings
+
+        User = get_user_model()
+        pin = "".join(random.choices(string.digits, k=4))
+
+        self.generated_pin = pin
+        self.status = "approved"
+        self.reviewed_by = admin_user
+        self.reviewed_at = timezone.now()
+        self.save()
+
+        user, _ = User.objects.get_or_create(
+            matricule=self.matricule,
+            defaults={
+                "name": self.name,
+                "email": self.email or f"{self.matricule}@gmail.com",
+                "phone_number": self.phone_number,
+            }
+        )
+        user.name = self.name
+        user.status = "approved"
+        user.pin_code = pin
+        user.fosa_mobile = self.fosa
+        user.phone_number = self.phone_number
+        user.moughataa_fk = self.moughataa
+        user.set_unusable_password()
+        user.save()
+        user.wilayas.add(self.wilaya)
+
+      
+        if self.email:
+            try:
+                send_mail(
+                    subject="Votre code PIN — Suivi Épidémiologique",
+                    message=(
+                        f"Bonjour {self.name},\n\n"
+                        f"Votre code PIN est : {pin}\n\n"
+                        f"Ministère de la Santé"
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[self.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                print(f"[EMAIL] Erreur: {e}")
+
+        if self.phone_number:
+            print(f"[SMS] PIN {pin} → {self.phone_number}")  
+
+        return pin
+
+    def refuse(self, admin_user):
+        from django.utils import timezone
+        self.status = "refused"
+        self.reviewed_by = admin_user
+        self.reviewed_at = timezone.now()
+        self.save()
+
+
+class Notification(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications"
+    )
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    type = models.CharField(
+        max_length=20,
+        choices=[
+            ("alert", "Alerte épidémique"),
+            ("validation", "Validation"),
+            ("info", "Information"),
+        ],
+        default="alert",
+    )
+    data = models.JSONField(null=True, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"
+
+#========================================================================
 
 class EmailVerification(models.Model):
     email = models.EmailField()

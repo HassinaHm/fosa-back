@@ -22,6 +22,8 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
     "10.0.2.2",
+    "0.0.0.0",
+    "*",
 ]
 
 # Application definition
@@ -40,6 +42,7 @@ INSTALLED_APPS = [
     "import_export",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
+    "django_extensions",
 ]
 
 MIDDLEWARE = [
@@ -142,3 +145,18 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "houceinhmd@gmail.com"
 EMAIL_HOST_PASSWORD = "dcvoxbsxnhzelefg"
 DEFAULT_FROM_EMAIL = "fosa <no-reply@test>"
+
+#=============================mobile============================
+MOBILE_ACCESS_TOKEN = "msr-sante-2026-mobile-key"
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    "x-mobile-token",  
+]

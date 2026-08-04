@@ -220,6 +220,38 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_commune(self, obj):
         return {"id": obj.commune_fk_id, "nom": getattr(obj.commune_fk, "nom", None)} if obj.commune_fk_id else None
 
+#===========================mobile============================
+from rest_framework import serializers
+from .models import AccessRequest, Notification
+
+
+class AccessRequestSerializer(serializers.ModelSerializer):
+    wilaya_nom = serializers.CharField(source="wilaya.nom", read_only=True)
+    moughataa_nom = serializers.CharField(source="moughataa.nom", read_only=True)
+    fosa_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AccessRequest
+        fields = [
+            "id", "name", "matricule", "email", "phone_number",
+            "wilaya", "wilaya_nom", "moughataa", "moughataa_nom",
+            "fosa", "fosa_nom", "status", "created_at",
+            "reviewed_at", "reviewed_by", "generated_pin",
+        ]
+        read_only_fields = [
+            "id", "status", "created_at", "reviewed_at",
+            "reviewed_by", "generated_pin",
+        ]
+
+    def get_fosa_nom(self, obj):
+        return obj.fosa.nom_fr or obj.fosa.structure or obj.fosa.code_etablissement
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ["id", "title", "message", "type", "data", "is_read", "created_at"]
+        read_only_fields = ["id", "created_at"]
+#========================================================================
 
 class EmailVerificationSerializer(serializers.Serializer):
     email = serializers.EmailField()

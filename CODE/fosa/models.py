@@ -216,7 +216,12 @@ def week_start(d):
 class Maladie(models.Model):
     name = models.CharField(max_length=120, unique=True)
     enabled_fields = models.JSONField(default=list)  # ex: ["deces", "cas_confirmes"]
-
+    #===================mobile==========================
+    name_ar = models.CharField(max_length=200, blank=True, null=True, verbose_name="Nom en arabe")
+    is_epidemic = models.BooleanField(default=False)
+    seuil_alerte = models.PositiveIntegerField(null=True, blank=True)
+    can_report_individually = models.BooleanField(default=False, verbose_name="Peut être signalée individuellement")
+    #===================================================
     def __str__(self):
         return self.name
 
@@ -241,7 +246,21 @@ class MaladieReport(models.Model):
     cas_confirmes = models.PositiveIntegerField(null=True, blank=True)
 
     updated_at = models.DateTimeField(auto_now=True)
-
+    #========================mobile=============================
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.SET_NULL, null=True,
+        blank=True,related_name="maladie_reports",verbose_name="Soumis par",
+    )
+    fosa = models.ForeignKey("FOSA", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="maladie_reports",verbose_name="FOSA",
+    )
+    STATUS_CHOICES = [
+        ("sent", "Envoyé"),      
+        ("validated","Validé"),       
+        ("alert", "Alerte"),      
+        ("pending", "En attente"),   
+    ]
+    status = models.CharField(max_length=20,choices=STATUS_CHOICES,default="sent",verbose_name="Statut")
+    #================================================================
     class Meta:
         constraints = [
             models.UniqueConstraint(

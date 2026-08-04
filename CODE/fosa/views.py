@@ -2,6 +2,7 @@ from accounts.permissions import CustomModelPermissions, FOSARolePermission
 from rest_framework import viewsets, permissions, serializers, generics, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.http import HttpResponse
 from import_export import resources
 from tablib import Dataset
@@ -14,7 +15,11 @@ from django.db.models import Q
 from import_export import resources
 from .models import FOSA, TypeStructure
 import json
-
+from .models import (
+    Wilaya, Moughataa, Commune, FOSA, FOSAHistory,
+    Maladie, MaladieReport,
+    TypeStructure, NormePersonnel, NormeService, NormeMateriel
+)
 from .serializers import (
     FOSASerializer, WilayaSerializer, MoughataaSerializer, CommuneSerializer,
     MaladieSerializer, MaladieReportSerializer, TypeStructureSerializer,
@@ -24,7 +29,8 @@ from .serializers import (
 )
 
 from .models import PersonnelStructure, ServiceStructure, MaterielStructure
-
+from .util import filter_queryset_by_role
+from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
@@ -174,9 +180,29 @@ class WilayaViewSet(viewsets.ModelViewSet):
             return qs.filter(Q(id__in=wilaya_ids) | Q(nom__in=wilaya_noms))
 
         return qs.none()
+    #=========================mobile===============================
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="mobile",
+        permission_classes=[AllowAny],
+    )
+    def mobile_list(self, request):
+        token    = request.headers.get("X-Mobile-Token", "")
+        expected = getattr(settings, "MOBILE_ACCESS_TOKEN",
+                           "msr-sante-2026-mobile-key")
+        print(f"HEADERS REÇUS: {dict(request.headers)}")
+        print(f"X-Mobile-Token reçu: {token}")
 
-
-
+        if token != expected:
+            return Response({"error": "Non autorisé"}, status=403)
+        
+        wilayas = Wilaya.objects.all().order_by("nom")
+        return Response([{
+            "id":   w.id,
+            "name": w.nom,
+        } for w in wilayas])
+    #===============================================================
 class MoughataaViewSet(viewsets.ModelViewSet):
     serializer_class = MoughataaSerializer
     filterset_fields = ["wilaya"]
@@ -210,7 +236,31 @@ class MoughataaViewSet(viewsets.ModelViewSet):
 
         return qs.none()
 
+    #=============================mobile==============================
+    @action(
+    detail=False,
+    methods=["get"],
+    url_path="mobile",
+    permission_classes=[AllowAny],
+    )
+    def mobile_list(self, request):
+        token    = request.headers.get("X-Mobile-Token", "")
+        expected = getattr(settings, "MOBILE_ACCESS_TOKEN", "msr-sante-2026-mobile-key")
 
+        if token != expected:
+            return Response({"error": "Non autorisé"}, status=403)
+
+        wilaya_id = request.query_params.get("wilaya")
+        if not wilaya_id: 
+            return Response({"error": "Paramètre wilaya requis"}, status=400)
+
+        qs = Moughataa.objects.filter(wilaya_id=wilaya_id).order_by("nom")
+
+        print(f"MOUGHATAAS URL: {request.build_absolute_uri()}")
+        print(f"MOUGHATAAS STATUS: 200 | BODY: {list(qs.values('id','nom'))}")
+
+        return Response([{"id": m.id, "name": m.nom,} for m in qs])
+    #==============================================================
 
 class CommuneViewSet(viewsets.ModelViewSet):
     serializer_class = CommuneSerializer
@@ -250,9 +300,29 @@ class CommuneViewSet(viewsets.ModelViewSet):
             return q
 
         return qs.none()
+    
+    #========================mobile===============================
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="mobile",
+        permission_classes=[AllowAny],
+    )
+    def mobile_list(self, request):
+        token    = request.headers.get("X-Mobile-Token", "")
+        expected = getattr(settings, "MOBILE_ACCESS_TOKEN", "msr-sante-2026-mobile-key")
 
+        if token != expected:
+            return Response({"error": "Non autorisé"}, status=403)
 
+        moughataa_id = request.query_params.get("moughataa")
+        if not moughataa_id:
+            return Response({"error": "Paramètre moughataa requis"}, status=400)
+        
+        qs = Commune.objects.filter(moughataa_id=moughataa_id).order_by("nom")
 
+        return Response([{"id": c.id,"name": c.nom,} for c in qs])
+    #=============================================================
 
 # fosa/views_import.py
 from rest_framework.views import APIView
@@ -298,8 +368,25 @@ from .models import Maladie, MaladieReport
 class MaladieViewSet(viewsets.ModelViewSet):
     queryset = Maladie.objects.all().order_by("name")
     serializer_class = MaladieSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [IsAuthenticated, CustomModelPermissions,]
 
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), CustomModelPermissions(),FOSARolePermission()]
+    #=================mobile=====================
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        return Response([{
+            "id": m.id,
+            "name": m.name,
+            "name_ar": getattr(m, "name_ar",  None),
+            "enabled_fields": m.enabled_fields,
+            "is_epidemic": getattr(m, "is_epidemic", False),
+            "seuil_alerte": getattr(m, "seuil_alerte", None),
+            "can_report_individually": getattr(m, "can_report_individually", False),
+        } for m in qs])
+    #=============================================
 
 class MaladieReportViewSet(viewsets.ModelViewSet):
     serializer_class = MaladieReportSerializer
@@ -307,14 +394,53 @@ class MaladieReportViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ['wilaya', 'moughataa', 'maladie', 'date']
     search_fields = ['wilaya__nom', 'moughataa__nom', 'maladie__name']
-
+    #=================mobile======================
+    def get_permissions(self):
+        params = self.request.query_params
+        if (params.get("mine") == "true" or
+                params.get("period") == "week"):
+            return [IsAuthenticated()]
+        return [permissions.IsAuthenticated()]
+    #==============================================
     def get_queryset(self):
         qs = MaladieReport.objects.select_related('wilaya', 'moughataa', 'maladie').all()
         user = self.request.user
-
+        params = self.request.query_params
         if not user.is_authenticated:
             return qs.none()
 
+        #=================mobile================
+        if self.request.query_params.get("mine") == "true":
+            return (
+                qs.filter(submitted_by=user)
+                .order_by("-date")
+            )
+        
+        if params.get("period") == "week":
+            from datetime import date, timedelta
+            today = date.today()
+            week_start = today - timedelta(days=today.weekday())
+            week_end = week_start + timedelta(days=6)
+            return (
+                qs.filter(
+                    submitted_by=user,
+                    date__range=(week_start, week_end),
+                )
+                .order_by("-date")
+            )
+        date_param = params.get("date")
+        date_start = params.get("date_start")
+        date_end   = params.get("date_end")
+        wilaya     = params.get("wilaya")
+        moughataa  = params.get("moughataa")
+        maladie    = params.get("maladie")
+
+        if date_param: qs = qs.filter(date=date_param)
+        if date_start and date_end: qs = qs.filter(date__range=[date_start, date_end])
+        if wilaya: qs = qs.filter(wilaya_id=wilaya)
+        if moughataa: qs = qs.filter(moughataa_id=moughataa)
+        if maladie: qs = qs.filter(maladie_id=maladie)
+        #=========================================================
         if user.is_superuser:
             return qs
 
@@ -333,8 +459,115 @@ class MaladieReportViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         return qs.none()
+    
+    #===================mobile====================
+    def perform_create(self, serializer):
+        serializer.save(submitted_by=self.request.user)
+    
+    @action(detail=False, methods=["get"], url_path="export-weekly")
+    def export_weekly(self, request):
+        import io
+        from datetime import datetime
+        from openpyxl import Workbook
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from django.http import HttpResponse
 
+        date_start = request.query_params.get("date_start")
+        date_end = request.query_params.get("date_end")
 
+        if not date_start or not date_end:
+            return Response({"detail": "date_start et date_end sont requis (format: YYYY-MM-DD)"},
+                status=400
+            )
+
+        try:
+            start = datetime.strptime(date_start, "%Y-%m-%d").date()
+            end = datetime.strptime(date_end, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"detail": "Format de date invalide. Utilisez YYYY-MM-DD"},
+                status=400
+            )
+        week_num = start.isocalendar()[1]
+        reports = (MaladieReport.objects.filter(date__range=[start, end])
+            .select_related("wilaya", "moughataa", "maladie")
+            .order_by("wilaya__nom", "moughataa__nom", "maladie__name")
+        )
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Rapport Hebdomadaire"
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        title_font = Font(bold=True, size=12)
+        border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin")
+        )
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        ws.merge_cells("A1:H1")
+        ws["A1"].value = "NOTIFICATION DES MALADIES ET EVENEMENTS"
+        ws["A1"].font = title_font
+        ws["A1"].alignment = center_align
+
+        ws.merge_cells("A2:H2")
+        ws["A2"].value = (
+            f"Sem. Épid. N° : {week_num:02d}  "
+            f"du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}"
+        )
+        ws["A2"].font = Font(bold=True, size=10)
+        ws["A2"].alignment = center_align
+
+        row  = 4
+        headers = [
+            "Wilaya", "Moughataa", "Maladie",
+            "Cas Suspects", "Décès",
+            "Cas Prélevés", "Cas Testés", "Cas Confirmés"
+        ]
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=row, column=col_idx)
+            cell.value = header
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = border
+
+        row = 5
+        for report in reports:
+            ws.cell(row=row, column=1).value = report.wilaya.nom
+            ws.cell(row=row, column=2).value = report.moughataa.nom
+            ws.cell(row=row, column=3).value = report.maladie.name
+            ws.cell(row=row, column=4).value = report.cas_suspects  or 0
+            ws.cell(row=row, column=5).value = report.deces         or 0
+            ws.cell(row=row, column=6).value = report.cas_preleves  or 0
+            ws.cell(row=row, column=7).value = report.cas_testes    or 0
+            ws.cell(row=row, column=8).value = report.cas_confirmes or 0
+            for col in range(1, 9):
+                ws.cell(row=row, column=col).border = border
+                ws.cell(row=row, column=col).alignment = center_align
+            row += 1
+        ws.column_dimensions["A"].width = 20
+        ws.column_dimensions["B"].width = 20
+        ws.column_dimensions["C"].width = 35
+        for col in ["D", "E", "F", "G", "H"]:
+            ws.column_dimensions[col].width = 15
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = (
+            f"Rapport_Epid_Sem_{week_num:02d}_"
+            f"{start.strftime('%Y%m%d')}_au_{end.strftime('%Y%m%d')}.xlsx"
+        )
+        response = HttpResponse(
+            output.getvalue(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument"".spreadsheetml.sheet"),
+        )
+        response["Content-Disposition"] = (f"attachment; filename={filename}")
+        return response
+    #==============================================
 # Import/Export
 
 
@@ -426,6 +659,44 @@ class FOSAViewSet(viewsets.ModelViewSet):
             action=action,
             changes=changes
         )
+     #======================Mobile======================
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="mobile",
+        permission_classes=[AllowAny],
+    )
+    def mobile_list(self, request):
+        token    = request.headers.get("X-Mobile-Token", "")
+        expected = getattr(settings, "MOBILE_ACCESS_TOKEN", "msr-sante-2026-mobile-key")
+
+        if token != expected:
+            return Response({"error": "Non autorisé"}, status=403)
+
+        moughataa_id = request.query_params.get("moughataa")
+        if not moughataa_id:
+            return Response({"error": "Paramètre moughataa requis"},status=400)
+        
+        qs = FOSA.objects.filter(moughataa_fk_id=moughataa_id)
+        print(f"[FOSA mobile] via moughataa_fk_id={moughataa_id}: {qs.count()} résultats")
+
+        if qs.count() == 0:
+            qs = FOSA.objects.filter(commune_fk__moughataa_fk_id=moughataa_id)
+            print(f"[FOSA mobile] via commune: {qs.count()} résultats")
+
+        if qs.count() == 0:
+            sample = FOSA.objects.first()
+            if sample: print(
+                            f"[FOSA mobile] Exemple FOSA: "
+                            f"code={sample.code_etablissement}, "
+                            f"moughataa_fk_id={getattr(sample, 'moughataa_fk_id', 'N/A')}, "
+                            f"commune_fk_id={getattr(sample, 'commune_fk_id', 'N/A')}"
+                        )
+
+        print(f"FOSAS STATUS: 200 | BODY: {[f.code_etablissement for f in qs]}")
+
+        return Response([{"id": f.code_etablissement, "name": f.nom_fr or f.structure or str(f.code_etablissement),
+        } for f in qs.order_by("nom_fr")])
     # ============================================================
     # Import / Export
     # ============================================================
@@ -619,6 +890,8 @@ class FOSAViewSet(viewsets.ModelViewSet):
             })
 
         return Response(conformity_data)
+    
+
 
 
 # Vue Historique
@@ -779,3 +1052,5 @@ from rest_framework import viewsets
 
 #     def get_queryset(self):
 #         qs = super().get_queryset()
+
+
