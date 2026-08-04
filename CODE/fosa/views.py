@@ -14,95 +14,254 @@ from django.db.models import Q
 from import_export import resources
 from .models import FOSA, TypeStructure
 import json
-
-from .serializers import (
-    FOSASerializer, WilayaSerializer, MoughataaSerializer, CommuneSerializer,
-    MaladieSerializer, MaladieReportSerializer, TypeStructureSerializer,
-    NormePersonnelSerializer, NormeServiceSerializer, NormeMaterielSerializer,
-    PersonnelStructureSerializer, ServiceStructureSerializer, MaterielStructureSerializer,  # ADD THESE
-    FOSAHistorySerializer
-)
-
-
-logger = logging.getLogger(__name__)
-
-
-
+import csv
+from rest_framework.permissions import AllowAny
 # fosa/views_geo.py
 from rest_framework import viewsets, filters
-# from django_filters.rest_framework import DjangoFilterBackend
 from .models import Wilaya, Moughataa, Commune
 from .serializers import  FOSASerializer, WilayaSerializer, MoughataaSerializer, CommuneSerializer
 from accounts.permissions import CustomModelPermissions  # si tu veux verrouiller CRUD
 
 
+from .serializers import (
+    FOSASerializer, WilayaSerializer, MoughataaSerializer, CommuneSerializer,
+    MaladieSerializer, MaladieReportSerializer, TypeStructureSerializer,
+    NormePersonnelSerializer, NormeServiceSerializer, NormeMaterielSerializer,
+    PersonnelStructureSerializer, ServiceStructureSerializer, MaterielStructureSerializer,
+    FOSAHistorySerializer
+)
 
+from .models import PersonnelStructure, ServiceStructure, MaterielStructure
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# PERSONNEL STRUCTURE VIEWSET
+# ============================================================
+class PersonnelStructureViewSet(viewsets.ModelViewSet):
+   
+    serializer_class = PersonnelStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure']
+    search_fields = ['intitule_poste', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = PersonnelStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'intitule_poste')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+
+# ============================================================
+# SERVICE STRUCTURE VIEWSET
+# ============================================================
+class ServiceStructureViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing services in FOSA structures.
+    Filter by FOSA using ?fosa={code_etablissement}
+    """
+    serializer_class = ServiceStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure', 'disponible']
+    search_fields = ['nom_service', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = ServiceStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'nom_service')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+
+# ============================================================
+# MATERIEL STRUCTURE VIEWSET
+# ============================================================
+class MaterielStructureViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing materiel (equipment) in FOSA structures.
+    Filter by FOSA using ?fosa={code_etablissement}
+    """
+    serializer_class = MaterielStructureSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['structure']
+    search_fields = ['nom_materiel', 'structure__nom_fr', 'structure__code_etablissement']
+
+    def get_queryset(self):
+        qs = MaterielStructure.objects.select_related('structure').all()
+        
+        # Filter by FOSA code if provided
+        fosa_code = self.request.query_params.get('fosa')
+        if fosa_code:
+            qs = qs.filter(structure__code_etablissement=fosa_code)
+        
+        # Filter by structure ID if provided
+        structure_id = self.request.query_params.get('structure')
+        if structure_id:
+            qs = qs.filter(structure_id=structure_id)
+        
+        return qs.order_by('structure__code_etablissement', 'nom_materiel')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+#=====
+#MOBILE MODIFICATION
+#=====
+MOBILE_TOKEN = "msr-sante-2026-mobile-key"
+ 
+def is_mobile_request(request):
+    return request.headers.get("X-Mobile-Token") == MOBILE_TOKEN
+ 
 class WilayaViewSet(viewsets.ModelViewSet):
-    serializer_class = WilayaSerializer
-
+    serializer_class = WilayaSerializer  
+ 
+    def get_permissions(self):
+        if self.action == "mobile":
+            return [AllowAny()]
+        return [permissions.IsAuthenticated()]
+ 
     def get_queryset(self):
         qs = Wilaya.objects.all().order_by("nom")
         user = self.request.user
-
+ 
         if not user.is_authenticated:
             return qs.none()
-
+ 
         if getattr(user, "is_superuser", False):
             return qs
-
+ 
         role = getattr(getattr(user, "role", None), "nom", None)
-
+ 
         if role == "Administrateur national":
             return qs
-
-        if role == "gestionnaire régional":
-            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
+        
+        if role == "rapporteur":
+            return qs.filter(id=user.fosa_fk.wilaya_fk_id)
+    
+        if role in ("gestionnaire régional", "gestionnaire local"):
+            wilaya_ids  = list(user.wilayas.values_list("id", flat=True))
             wilaya_noms = list(user.wilayas.values_list("nom", flat=True))
             return qs.filter(Q(id__in=wilaya_ids) | Q(nom__in=wilaya_noms))
-
-        if role == "gestionnaire local":
-            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
-            wilaya_noms = list(user.wilayas.values_list("nom", flat=True))
-            return qs.filter(Q(id__in=wilaya_ids) | Q(nom__in=wilaya_noms))
-
+ 
         return qs.none()
+ 
+    @action(detail=False, methods=["get"], url_path="mobile", permission_classes=[AllowAny])
+    def mobile(self, request):
+        print("HEADERS:", dict(request.headers))
+        print("TOKEN:", request.headers.get("X-Mobile-Token"))
 
+        if not is_mobile_request(request):
+            return Response(
+               {
+                "received": request.headers.get("X-Mobile-Token"),
+                "expected": MOBILE_TOKEN,
+              },
+            status=403,
+        )
 
-
+        wilayas = Wilaya.objects.all().order_by("nom").values("id", "nom")
+        return Response(list(wilayas))
+ 
+ 
 class MoughataaViewSet(viewsets.ModelViewSet):
     serializer_class = MoughataaSerializer
     filterset_fields = ["wilaya"]
-    search_fields = ["nom", "code", "wilaya__nom"]
-
+    search_fields    = ["nom", "code", "wilaya__nom"]
+ 
+    def get_permissions(self):
+        if self.action == "mobile":
+            return [AllowAny()]
+        return [permissions.IsAuthenticated()]
+ 
     def get_queryset(self):
         qs = Moughataa.objects.select_related("wilaya").all()
         user = self.request.user
-
+ 
         if not user.is_authenticated:
             return qs.none()
-
+ 
         if getattr(user, "is_superuser", False):
             return qs
-
+ 
         role = getattr(getattr(user, "role", None), "nom", None)
-
+ 
         if role == "Administrateur national":
             return qs
-
+        if role == "rapporteur":
+           return qs.filter(id=user.fosa_fk.moughataa_fk_id)
+            
         if role == "gestionnaire régional":
-            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
+            wilaya_ids  = list(user.wilayas.values_list("id", flat=True))
             wilaya_noms = list(user.wilayas.values_list("nom", flat=True))
-            return qs.filter(Q(wilaya_id__in=wilaya_ids) | Q(wilaya__nom__in=wilaya_noms))
-
+            return qs.filter(
+                Q(wilaya_id__in=wilaya_ids) | Q(wilaya__nom__in=wilaya_noms)
+            )
+ 
         if role == "gestionnaire local":
             return qs.filter(
                 Q(id=user.moughataa_fk_id) |
                 Q(nom=getattr(user.moughataa_fk, "nom", None))
             )
-
+ 
         return qs.none()
-
-
+ 
+    # ── GET /api/moughataas/mobile/?wilaya=3 ────────────────────────
+    # ✅ FIXED: only ONE mobile method, filters by wilaya param
+    @action(detail=False, methods=["get"], url_path="mobile", permission_classes=[AllowAny])
+    def mobile(self, request):
+        if not is_mobile_request(request):
+            return Response({"detail": "Token mobile requis."}, status=403)
+ 
+        wilaya_id = request.query_params.get("wilaya")
+ 
+        qs = Moughataa.objects.select_related("wilaya").all().order_by("nom")
+ 
+        # ✅ Filter by wilaya if provided
+        if wilaya_id:
+            try:
+                qs = qs.filter(wilaya_id=int(wilaya_id))
+            except (ValueError, TypeError):
+                return Response({"detail": "wilaya param invalide"}, status=400)
+ 
+        data = list(qs.values("id", "nom", "wilaya_id"))
+        return Response(data)
+ 
 
 class CommuneViewSet(viewsets.ModelViewSet):
     serializer_class = CommuneSerializer
@@ -123,7 +282,9 @@ class CommuneViewSet(viewsets.ModelViewSet):
 
         if role == "Administrateur national":
             return qs
-
+        if role == "rapporteur":
+            return qs.filter(id=user.fosa_fk.commune_fk_id)
+            
         if role == "gestionnaire régional":
             wilaya_ids = list(user.wilayas.values_list("id", flat=True))
             wilaya_noms = list(user.wilayas.values_list("nom", flat=True))
@@ -144,8 +305,6 @@ class CommuneViewSet(viewsets.ModelViewSet):
         return qs.none()
 
 
-
-
 # fosa/views_import.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -159,11 +318,6 @@ from .utils_import_geo import import_geo_from_xlsx
 from accounts.permissions import CustomModelPermissions  
 
 class GeoImportView(APIView):
-    """
-    POST multipart/form-data:
-      - file: .xlsx
-      - update_if_exists: "true" / "false"
-    """
     parser_classes = [MultiPartParser]
     permission_classes = [permissions.IsAuthenticated ,CustomModelPermissions, FOSARolePermission]
 
@@ -187,36 +341,6 @@ class GeoImportView(APIView):
                 default_storage.delete(temp_path)
             except Exception:
                 pass
-
-
-
-# # Serializer principal
-# class FOSASerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = FOSA
-#         fields = [
-#             'nom_fr', 'nom_ar', 'type', 'code_etablissement',
-#             'longitude', 'latitude', 'coordonnees', 'adresse',
-#             'responsable', 'commune', 'moughataa', 'wilaya',
-#             'departement', 'is_public'
-#         ]
-#         read_only_fields = ['code_etablissement', 'coordonnees', 'adresse', 'is_public']
-
-#     def validate(self, data):
-#         errors = {}
-#         if not data.get('nom_fr'):
-#             errors['nom_fr'] = "Ce champ est obligatoire"
-#         if not data.get('type'):
-#             errors['type'] = "Ce champ est obligatoire"
-#         if not data.get('wilaya') or not data.get('moughataa') or not data.get('commune'):
-#             errors['localisation'] = "Wilaya, Moughataa et commune sont obligatoires"
-#         if errors:
-#             raise serializers.ValidationError(errors)
-#         return data
-
-
-# Import/Export
-
 
 class FOSAResource(resources.ModelResource):
     class Meta:
@@ -346,10 +470,8 @@ class FOSAResource(resources.ModelResource):
     def before_import_row(self, row, **kwargs):
         # Type
         row['type'] = self.clean_type(row.get('type'))
-
         # Coordonnées
         self.clean_coordinates(row)
-
         # Booléens
         for bf in ['cloture', 'electricite', 'internet', 'eau', 'cdf']:
             row[bf] = self.parse_bool(row.get(bf))
@@ -388,10 +510,7 @@ class FOSAResource(resources.ModelResource):
         # Remplir structure si manquant (par nom_fr)
         if not instance.structure and instance.nom_fr:
             instance.structure = instance.nom_fr
-
-    # ------------------------------------------------------------
-    # Récupération de l'instance existante pour update
-    # ------------------------------------------------------------
+            
     def get_instance(self, instance_loader, row):
         try:
             code = row.get('code_etablissement')
@@ -448,6 +567,9 @@ class FOSAViewSet(viewsets.ModelViewSet):
         role = getattr(getattr(user, "role", None), "nom", None)
         if role == "Administrateur national":
             return qs
+        
+        if role == "rapporteur":
+            return qs.filter(code_etablissement=user.fosa_fk_id)
 
         if role == "gestionnaire régional":
             wilaya_ids = list(user.wilayas.values_list("id", flat=True))
@@ -461,7 +583,6 @@ class FOSAViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         return qs.filter(is_public=True)
-
     # ============================================================
     # HISTORIQUE
     # ============================================================
@@ -647,14 +768,12 @@ class FOSAViewSet(viewsets.ModelViewSet):
     # ============================================================
     @action(detail=True, methods=["get"])
     def personnels(self, request, code_etablissement=None):
-        """Get all personnel for this structure"""
         fosa = self.get_object()
         qs = fosa.personnels.all().order_by("intitule_poste")
         return Response(PersonnelStructureSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="personnels/upsert")
     def personnels_upsert(self, request, code_etablissement=None):
-        """Upsert multiple personnel items"""
         fosa = self.get_object()
         items = request.data if isinstance(request.data, list) else [request.data]
         saved = []
@@ -705,14 +824,12 @@ class FOSAViewSet(viewsets.ModelViewSet):
     # ============================================================
     @action(detail=True, methods=["get"])
     def materiels(self, request, code_etablissement=None):
-        """Get all materiel for this structure"""
         fosa = self.get_object()
         qs = fosa.materiels.all().order_by("nom_materiel")
         return Response(MaterielStructureSerializer(qs, many=True).data)
 
     @action(detail=True, methods=["post"], url_path="materiels/upsert")
     def materiels_upsert(self, request, code_etablissement=None):
-        """Upsert multiple materiel items"""
         fosa = self.get_object()
         items = request.data if isinstance(request.data, list) else [request.data]
         saved = []
@@ -729,9 +846,7 @@ class FOSAViewSet(viewsets.ModelViewSet):
             saved.append(MaterielStructureSerializer(obj).data)
         return Response(saved, status=200)
 
-    # ============================================================
     # CONFORMITY REPORT
-    # ============================================================
     @action(detail=False, methods=["get"], url_path="conformity-report")
     def conformity_report(self, request):
         """Calculate conformity percentage for each structure"""
@@ -821,9 +936,67 @@ class FOSAViewSet(viewsets.ModelViewSet):
                 }
             })
 
-        return Response(conformity_data)    
+        return Response(conformity_data)  
+    ###--------------
+    #MOBILE SECTION
+    ###-------------
+    def get_permissions(self):
+        
+        if self.action == "mobile":
+            return [AllowAny()]
+        return [
+            permissions.IsAuthenticated(),
+            CustomModelPermissions(),
+            FOSARolePermission(),
+        ]
     
-# Vue Historique
+    @action(detail=False, methods=["get"], url_path="mobile", permission_classes=[AllowAny])
+    def mobile(self, request):
+        if not is_mobile_request(request):
+            return Response({"detail": "Token mobile requis."}, status=403)
+ 
+        moughataa_id = request.query_params.get("moughataa")
+        wilaya_id    = request.query_params.get("wilaya")
+ 
+        # ✅ Query directly — bypass get_queryset() which requires auth
+        qs = FOSA.objects.select_related(
+            "wilaya_fk", "moughataa_fk"
+        ).all().order_by("structure")
+ 
+        if moughataa_id:
+            try:
+                mid = int(moughataa_id)
+                moughataa_obj = Moughataa.objects.filter(id=mid).first()
+                if moughataa_obj:
+                    qs = qs.filter(
+                        Q(moughataa_fk_id=mid) |
+                        Q(moughataa__iexact=moughataa_obj.nom)
+                    )
+                else:
+                    qs = qs.filter(moughataa_fk_id=mid)
+            except (ValueError, TypeError):
+                return Response({"detail": "moughataa param invalide"}, status=400)
+ 
+        if wilaya_id:
+            try:
+                wid = int(wilaya_id)
+                wilaya_obj = Wilaya.objects.filter(id=wid).first()
+                if wilaya_obj:
+                    qs = qs.filter(
+                        Q(wilaya_fk_id=wid) |
+                        Q(wilaya__iexact=wilaya_obj.nom)
+                    )
+                else:
+                    qs = qs.filter(wilaya_fk_id=wid)
+            except (ValueError, TypeError):
+                return Response({"detail": "wilaya param invalide"}, status=400)
+ 
+        data = list(qs.values(
+            "code_etablissement", "structure", "nom_fr",
+            "moughataa", "wilaya"
+        ))
+        return Response(data)
+ 
 class FOSAHistorySerializer(serializers.ModelSerializer):
     fosa_code_etablissement = serializers.ReadOnlyField(source='fosa.code_etablissement')
     fosa_nom_fr = serializers.ReadOnlyField(source='fosa.nom_fr')
@@ -924,95 +1097,6 @@ def to_list(v):
 
     return [s]
 
-# class StructureImportView(APIView):
-#     parser_classes = [MultiPartParser]
-#     permission_classes = [permissions.IsAuthenticated]  # (garde simple pour tester)
-
-#     def post(self, request):
-#         f = request.FILES.get("file")
-#         if not f:
-#             return Response({"detail": "Aucun fichier reçu (clé 'file')"}, status=400)
-
-#         raw = f.read()
-#         try:
-#             text = raw.decode("utf-8")
-#         except UnicodeDecodeError:
-#             text = raw.decode("ISO-8859-1", errors="replace")
-
-#         # IMPORTANT: si ton CSV est généré par Excel FR => souvent ; sinon mets delimiter=","
-#         reader = csv.DictReader(io.StringIO(text), delimiter=";")
-
-#         allowed = {
-#             "code","structure","etat","nom_ar","coordonnee_gps","responsable","etat_batiment",
-#             "date_de_construction","cloture","electricite","internet","eau","cdf","equipement",
-#             "fosa_reference","fosa_plus_proche","besoins","pourcentage_activite",
-#             "observation","bailleur","source_file",
-#         }
-
-#         created, updated, skipped = 0, 0, 0
-#         errors = []
-
-#         with transaction.atomic():
-#             for i, row in enumerate(reader, start=2):
-#                 try:
-#                     wilaya_name = (row.get("wilaya") or "").strip()
-#                     moughataa_name = (row.get("moughataa") or "").strip()
-#                     commune_name = (row.get("commune") or "").strip()
-
-#                     wilaya = Wilaya.objects.filter(nom__iexact=wilaya_name).first() if wilaya_name else None
-#                     moughataa = None
-#                     commune = None
-
-#                     if wilaya and moughataa_name:
-#                         moughataa = Moughataa.objects.filter(wilaya=wilaya, nom__iexact=moughataa_name).first()
-
-#                     if moughataa and commune_name:
-#                         commune = Commune.objects.filter(moughataa=moughataa, nom__iexact=commune_name).first()
-
-#                     ts = None
-#                     t = (row.get("type") or "").strip()
-#                     if t:
-#                         ts = TypeStructure.objects.filter(code__iexact=t).first() or TypeStructure.objects.filter(libelle__iexact=t).first()
-
-#                     data = {k: row.get(k) for k in allowed if k in row}
-
-#                     for bfield in ("cloture", "electricite", "internet", "eau", "cdf"):
-#                         if bfield in data:
-#                             data[bfield] = to_bool(data[bfield])
-
-#                     data["prestation_service"] = to_list(row.get("prestation_service"))
-#                     data["service_manquant"] = to_list(row.get("service_manquant"))
-
-#                     data["wilaya_fk"] = wilaya
-#                     data["moughataa_fk"] = moughataa
-#                     data["commune_fk"] = commune
-#                     data["type_structure"] = ts
-
-#                     code = (row.get("code") or "").strip()
-
-#                     if code:
-#                         obj, is_created = StructureSante.objects.update_or_create(
-#                             code=code,
-#                             defaults=data
-#                         )
-#                     else:
-#                         obj = StructureSante.objects.create(**data)
-#                         is_created = True
-
-#                     created += 1 if is_created else 0
-#                     updated += 0 if is_created else 1
-
-#                 except Exception as e:
-#                     skipped += 1
-#                     errors.append({"line": i, "error": str(e)})
-
-#         return Response({
-#             "status": "ok",
-#             "created": created,
-#             "updated": updated,
-#             "skipped": skipped,
-#             "errors": errors[:50],
-#         })
 
 from .models import Maladie, MaladieReport
 from .serializers import MaladieSerializer, MaladieReportSerializer
@@ -1035,39 +1119,71 @@ class MaladieReportViewSet(viewsets.ModelViewSet):
     queryset = MaladieReport.objects.select_related("wilaya", "moughataa", "maladie").all()
     serializer_class = MaladieReportSerializer
     parser_classes = [JSONParser, FormParser, MultiPartParser]
-    permission_classes = [permissions.IsAuthenticated, CustomModelPermissions, FOSARolePermission]
+
+    def get_permissions(self):
+        if self.action in ("create", "list", "retrieve"):
+            return [permissions.IsAuthenticated()]
+        return [
+            permissions.IsAuthenticated(),
+            CustomModelPermissions(),
+            FOSARolePermission(),
+        ]
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+        # ── Role-based scoping ──────────────────────────────
+        if not user.is_authenticated:
+            return qs.none()
 
-        date = self.request.query_params.get("date")
+        if not user.is_superuser:
+            role = getattr(getattr(user, "role", None), "nom", None)
+            if role == "Administrateur national":
+                pass  # sees everything
+            elif role == "gestionnaire régional":
+                wilaya_ids = list(user.wilayas.values_list("id", flat=True))
+                qs = qs.filter(wilaya_id__in=wilaya_ids)
+
+            elif role == "gestionnaire local":
+                qs = qs.filter(moughataa_id=user.moughataa_fk_id)
+
+            elif role == "rapporteur":
+                qs = qs.filter(submitted_by=user)
+
+            else:
+                return qs.none()
+        # ── Query param filters ─────────────────────────────
+        date       = self.request.query_params.get("date")
         date_start = self.request.query_params.get("date_start")
-        date_end = self.request.query_params.get("date_end")
-        wilaya = self.request.query_params.get("wilaya")
-        moughataa = self.request.query_params.get("moughataa")
-        maladie = self.request.query_params.get("maladie")
+        date_end   = self.request.query_params.get("date_end")
+        wilaya     = self.request.query_params.get("wilaya")
+        moughataa  = self.request.query_params.get("moughataa")
+        maladie    = self.request.query_params.get("maladie")
+        status_f   = self.request.query_params.get("status")
 
         if date:
             qs = qs.filter(date=date)
         if date_start and date_end:
             qs = qs.filter(date__range=[date_start, date_end])
-
         if wilaya:
             qs = qs.filter(wilaya_id=wilaya)
         if moughataa:
             qs = qs.filter(moughataa_id=moughataa)
         if maladie:
             qs = qs.filter(maladie_id=maladie)
+        if status_f:
+            qs = qs.filter(status=status_f)
 
         return qs.order_by("date", "wilaya_id", "moughataa_id", "maladie_id")
 
+    def perform_create(self, serializer):
+        serializer.save(
+            submitted_by=self.request.user,
+            status="submitted",
+        )
+    
     @action(detail=False, methods=["post"], url_path="upsert")
     def upsert(self, request):
-        """
-        Upsert par (date, wilaya, moughataa, disease).
-        Si existe => update (remplacer)
-        Sinon => create
-        """
         key_fields = ["date", "wilaya", "moughataa", "maladie"]
         missing = [f for f in key_fields if f not in request.data]
         if missing:
@@ -1298,7 +1414,6 @@ from rest_framework.response import Response
 from .models import (
     TypeStructure,
     NormePersonnel, NormeService, NormeMateriel,
-    # StructureSante,
     PersonnelStructure, ServiceStructure, MaterielStructure
 )
 
@@ -1315,7 +1430,6 @@ class NormePersonnelViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         type_structure = self.request.query_params.get("type_structure")
-        # ✅ FIX: Only filter if type_structure is not null/None
         if type_structure and type_structure != "null":
             try:
                 qs = qs.filter(type_structure_id=int(type_structure))
@@ -1357,530 +1471,256 @@ class NormeMaterielViewSet(viewsets.ModelViewSet):
                 pass
         return qs.order_by("nom_materiel")
     
-from django.db.models import Q
-from rest_framework import viewsets
-
-# CODE/fosa/views.py
-
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from django.db.models import Q
-from .models import FOSA, PersonnelStructure, ServiceStructure, MaterielStructure
-from .serializers import (
-    FOSASerializer, PersonnelStructureSerializer, 
-    ServiceStructureSerializer, MaterielStructureSerializer
-)
-
-# class FOSAViewSet(viewsets.ModelViewSet):
-#     queryset = FOSA.objects.select_related(
-#         "type_structure", "wilaya_fk", "moughataa_fk", "commune_fk"
-#     ).all()
-#     serializer_class = FOSASerializer
-#     parser_classes = [MultiPartParser, JSONParser, FormParser]
-#     permission_classes = [permissions.IsAuthenticated, CustomModelPermissions, FOSARolePermission]
-
-#     def get_queryset(self):
-#         qs = super().get_queryset()
-
-#         wilaya = self.request.query_params.get("wilaya_fk") or self.request.query_params.get("wilaya")
-#         moughataa = self.request.query_params.get("moughataa_fk") or self.request.query_params.get("moughataa")
-#         type_structure = self.request.query_params.get("type_structure")
-#         q = self.request.query_params.get("q")
-
-#         if wilaya and str(wilaya).isdigit():
-#             qs = qs.filter(wilaya_fk_id=wilaya)
-#         elif wilaya:
-#             qs = qs.filter(wilaya_fk__nom__iexact=wilaya)
-
-#         if moughataa and str(moughataa).isdigit():
-#             qs = qs.filter(moughataa_fk_id=moughataa)
-#         elif moughataa:
-#             qs = qs.filter(moughataa_fk__nom__iexact=moughataa)
-
-#         if type_structure:
-#             qs = qs.filter(type_structure_id=type_structure)
-
-#         if q:
-#             qs = qs.filter(
-#                 Q(code_etablissement__icontains=q) |
-#                 Q(structure__icontains=q) |
-#                 Q(wilaya__icontains=q) |
-#                 Q(moughataa__icontains=q) |
-#                 Q(commune__icontains=q) |
-#                 Q(responsable__icontains=q)
-#             )
-
-#         return qs.order_by("wilaya_fk__nom", "moughataa_fk__nom", "structure")
-
-#     # ✅ PERSONNEL ENDPOINTS
-#     @action(detail=True, methods=["get"], url_path="personnels")
-#     def get_personnels(self, request, pk=None):
-#         """Get all personnel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = PersonnelStructure.objects.filter(structure=structure).order_by("intitule_poste")
-#             serializer = PersonnelStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="personnels/add")
-#     def add_personnel(self, request, pk=None):
-#         """Add or update personnel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             intitule = request.data.get("intitule_poste")
-#             nombre = request.data.get("nombre_reel", 0)
-
-#             if not intitule or not intitule.strip():
-#                 return Response({"detail": "intitule_poste is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = PersonnelStructure.objects.update_or_create(
-#                 structure=structure,
-#                 intitule_poste=intitule,
-#                 defaults={"nombre_reel": nombre}
-#             )
-#             return Response(
-#                 PersonnelStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="personnels/upsert")
-#     def personnels_upsert(self, request, pk=None):
-#         """Upsert multiple personnel items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 intitule = it.get("intitule_poste")
-#                 nombre = it.get("nombre_reel", 0)
-#                 if not intitule:
-#                     return Response({"detail": "intitule_poste manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = PersonnelStructure.objects.update_or_create(
-#                     structure=structure,
-#                     intitule_poste=intitule,
-#                     defaults={"nombre_reel": nombre}
-#                 )
-#                 saved.append(PersonnelStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["delete"], url_path="personnels/(?P<personnel_id>[0-9]+)/delete")
-#     def delete_personnel(self, request, pk=None, personnel_id=None):
-#         """Delete specific personnel"""
-#         try:
-#             structure = self.get_object()
-#             personnel = PersonnelStructure.objects.get(id=personnel_id, structure=structure)
-#             personnel.delete()
-#             return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except PersonnelStructure.DoesNotExist:
-#             return Response({"detail": "Personnel not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     # ✅ SERVICES ENDPOINTS
-#     @action(detail=True, methods=["get"], url_path="services")
-#     def get_services(self, request, pk=None):
-#         """Get all services for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = ServiceStructure.objects.filter(structure=structure).order_by("nom_service")
-#             serializer = ServiceStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="services/add")
-#     def add_service(self, request, pk=None):
-#         """Add or update service for this structure"""
-#         try:
-#             structure = self.get_object()
-#             nom = request.data.get("nom_service")
-#             dispo = bool(request.data.get("disponible", False))
-
-#             if not nom or not nom.strip():
-#                 return Response({"detail": "nom_service is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = ServiceStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_service=nom,
-#                 defaults={"disponible": dispo}
-#             )
-#             return Response(
-#                 ServiceStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="services/upsert")
-#     def services_upsert(self, request, pk=None):
-#         """Upsert multiple service items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 nom = it.get("nom_service")
-#                 dispo = bool(it.get("disponible", False))
-#                 if not nom:
-#                     return Response({"detail": "nom_service manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = ServiceStructure.objects.update_or_create(
-#                     structure=structure,
-#                     nom_service=nom,
-#                     defaults={"disponible": dispo}
-#                 )
-#                 saved.append(ServiceStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["delete"], url_path="services/(?P<service_id>[0-9]+)/delete")
-#     def delete_service(self, request, pk=None, service_id=None):
-#         """Delete specific service"""
-#         try:
-#             structure = self.get_object()
-#             service = ServiceStructure.objects.get(id=service_id, structure=structure)
-#             service.delete()
-#             return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except ServiceStructure.DoesNotExist:
-#             return Response({"detail": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     # ✅ MATERIEL ENDPOINTS
-#     @action(detail=True, methods=["get"], url_path="materiels")
-#     def get_materiels(self, request, pk=None):
-#         """Get all materiel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = MaterielStructure.objects.filter(structure=structure).order_by("nom_materiel")
-#             serializer = MaterielStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/add")
-#     def add_materiel(self, request, pk=None):
-#         """Add or update materiel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             nom = request.data.get("nom_materiel")
-#             qte = request.data.get("quantite_reelle", 0)
-
-#             if not nom or not nom.strip():
-#                 return Response({"detail": "nom_materiel is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = MaterielStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_materiel=nom,
-#                 defaults={"quantite_reelle": qte}
-#             )
-#             return Response(
-#                 MaterielStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/upsert")
-#     def materiels_upsert(self, request, pk=None):
-#         """Upsert multiple materiel items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 nom = it.get("nom_materiel")
-#                 qte = it.get("quantite_reelle", 0)
-#                 if not nom:
-#                     return Response({"detail": "nom_materiel manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = MaterielStructure.objects.update_or_create(
-#                     structure=structure,
-#                     nom_materiel=nom,
-#                     defaults={"quantite_reelle": qte}
-#                 )
-#                 saved.append(MaterielStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["delete"], url_path="materiels/(?P<materiel_id>[0-9]+)/delete")
-#     def delete_materiel(self, request, pk=None, materiel_id=None):
-#         """Delete specific materiel"""
-#         try:
-#             structure = self.get_object()
-#             materiel = MaterielStructure.objects.get(id=materiel_id, structure=structure)
-#             materiel.delete()
-#             return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except MaterielStructure.DoesNotExist:
-#             return Response({"detail": "Materiel not found"}, status=status.HTTP_404_NOT_FOUND)
-
-
-#  @action(detail=True, methods=["get"], url_path="personnels")
-#     def get_personnels(self, request, pk=None):
-#         """Get all personnel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = PersonnelStructure.objects.filter(structure=structure).order_by("intitule_poste")
-#             serializer = PersonnelStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-#     @action(detail=True, methods=["get"])
-#     def services(self, request, code_etablissement=None):  # ✅ CHANGE pk to code_etablissement
-#         fosa = self.get_object()
-#         qs = fosa.services.all().order_by("nom_service")
-#         return Response(ServiceStructureSerializer(qs, many=True).data)
-
-#     @action(detail=True, methods=["post"], url_path="services/upsert")
-#     def services_upsert(self, request, code_etablissement=None):  # ✅ CHANGE pk to code_etablissement
-#         fosa = self.get_object()
-#         items = request.data if isinstance(request.data, list) else [request.data]
-#         saved = []
-#         for it in items:
-#             nom = it.get("nom_service")
-#             dispo = bool(it.get("disponible", False))
-#             if not nom:
-#                 return Response({"detail": "nom_service manquant"}, status=400)
-#             obj, _ = ServiceStructure.objects.update_or_create(
-#                 structure=fosa,
-#                 nom_service=nom,
-#                 defaults={"disponible": dispo},
-#             )
-#             saved.append(ServiceStructureSerializer(obj).data)
-#         return Response(saved, status=200)
-
-#     @action(detail=True, methods=["get"])
-#     def materiels(self, request, code_etablissement=None):  # ✅ CHANGE pk to code_etablissement
-#         fosa = self.get_object()
-#         qs = fosa.materiels.all().order_by("nom_materiel")
-#         return Response(MaterielStructureSerializer(qs, many=True).data)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/upsert")
-#     def materiels_upsert(self, request, code_etablissement=None):  # ✅ CHANGE pk to code_etablissement
-#         fosa = self.get_object()
-#         items = request.data if isinstance(request.data, list) else [request.data]
-#         saved = []
-#         for it in items:
-#             nom = it.get("nom_materiel")
-#             qte = it.get("quantite_reelle", 0)
-#             if not nom:
-#                 return Response({"detail": "nom_materiel manquant"}, status=400)
-#             obj, _ = MaterielStructure.objects.update_or_create(
-#                 structure=fosa,
-#                 nom_materiel=nom,
-#                 defaults={"quantite_reelle": qte},
-#             )
-#             saved.append(MaterielStructureSerializer(obj).data)
-#         return Response(saved, status=200)
-
-#     @action(detail=True, methods=["post"], url_path="personnels/add")
-#     def add_personnel(self, request, code_etablissement=None):
-#         """Add or update personnel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             intitule = request.data.get("intitule_poste")
-#             nombre = request.data.get("nombre_reel", 0)
-
-#             if not intitule or not intitule.strip():
-#                 return Response({"detail": "intitule_poste is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = PersonnelStructure.objects.update_or_create(
-#                 structure=structure,
-#                 intitule_poste=intitule,
-#                 defaults={"nombre_reel": nombre}
-#             )
-#             return Response(
-#                 PersonnelStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="personnels/upsert")
-#     def personnels_upsert(self, request, pk=None):
-#         """Upsert multiple personnel items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 intitule = it.get("intitule_poste")
-#                 nombre = it.get("nombre_reel", 0)
-#                 if not intitule:
-#                     return Response({"detail": "intitule_poste manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = PersonnelStructure.objects.update_or_create(
-#                     structure=structure,
-#                     intitule_poste=intitule,
-#                     defaults={"nombre_reel": nombre}
-#                 )
-#                 saved.append(PersonnelStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["delete"], url_path="personnels/(?P<personnel_id>[0-9]+)")
-#     def delete_personnel(self, request, pk=None, personnel_id=None):
-#         """Delete specific personnel"""
-#         try:
-#             structure = self.get_object()
-#             personnel = PersonnelStructure.objects.get(id=personnel_id, structure=structure)
-#             personnel.delete()
-#             return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except PersonnelStructure.DoesNotExist:
-#             return Response({"detail": "Personnel not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     # ✅ SERVICES ENDPOINTS
-#     @action(detail=True, methods=["get"], url_path="services")
-#     def get_services(self, request, pk=None):
-#         """Get all services for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = ServiceStructure.objects.filter(structure=structure).order_by("nom_service")
-#             serializer = ServiceStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="services/add")
-#     def add_service(self, request, pk=None):
-#         """Add or update service for this structure"""
-#         try:
-#             structure = self.get_object()
-#             nom = request.data.get("nom_service")
-#             dispo = bool(request.data.get("disponible", False))
-
-#             if not nom or not nom.strip():
-#                 return Response({"detail": "nom_service is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = ServiceStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_service=nom,
-#                 defaults={"disponible": dispo}
-#             )
-#             return Response(
-#                 ServiceStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="services/upsert")
-#     def services_upsert(self, request, pk=None):
-#         """Upsert multiple service items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 nom = it.get("nom_service")
-#                 dispo = bool(it.get("disponible", False))
-#                 if not nom:
-#                     return Response({"detail": "nom_service manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = ServiceStructure.objects.update_or_create(
-#                     structure=structure,
-#                     nom_service=nom,
-#                     defaults={"disponible": dispo}
-#                 )
-#                 saved.append(ServiceStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["delete"], url_path="services/(?P<service_id>[0-9]+)")
-#     def delete_service(self, request, pk=None, service_id=None):
-#         """Delete specific service"""
-#         try:
-#             structure = self.get_object()
-#             service = ServiceStructure.objects.get(id=service_id, structure=structure)
-#             service.delete()
-#             return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except ServiceStructure.DoesNotExist:
-#             return Response({"detail": "Service not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     # ✅ MATERIEL ENDPOINTS
-#     @action(detail=True, methods=["get"], url_path="materiels")
-#     def get_materiels(self, request, pk=None):
-#         """Get all materiel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             qs = MaterielStructure.objects.filter(structure=structure).order_by("nom_materiel")
-#             serializer = MaterielStructureSerializer(qs, many=True)
-#             return Response(serializer.data)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/add")
-#     def add_materiel(self, request, pk=None):
-#         """Add or update materiel for this structure"""
-#         try:
-#             structure = self.get_object()
-#             nom = request.data.get("nom_materiel")
-#             qte = request.data.get("quantite_reelle", 0)
-
-#             if not nom or not nom.strip():
-#                 return Response({"detail": "nom_materiel is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-#             obj, created = MaterielStructure.objects.update_or_create(
-#                 structure=structure,
-#                 nom_materiel=nom,
-#                 defaults={"quantite_reelle": qte}
-#             )
-#             return Response(
-#                 MaterielStructureSerializer(obj).data,
-#                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
-#             )
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=True, methods=["post"], url_path="materiels/upsert")
-#     def materiels_upsert(self, request, pk=None):
-#         """Upsert multiple materiel items"""
-#         try:
-#             structure = self.get_object()
-#             items = request.data if isinstance(request.data, list) else [request.data]
-
-#             saved = []
-#             for it in items:
-#                 nom = it.get("nom_materiel")
-#                 qte = it.get("quantite_reelle", 0)
-#                 if not nom:
-#                     return Response({"detail": "nom_materiel manquant"}, status=status.HTTP_400_BAD_REQUEST)
-
-#                 obj, _ = MaterielStructure.objects.update_or_create(
-#                     structure=structure,
-#                     nom_materiel=nom,
-#                     defaults={"quantite_reelle": qte}
-#                 )
-#                 saved.append(MaterielStructureSerializer(obj).data)
-
-#             return Response(saved, status=status.HTTP_200_OK)
-#         except FOSA.DoesNotExist:
-#             return Response({"detail": "Structure not found"}, status=status.HTTP_404_NOT_FOUND)
-
-#     @action(detail=False, methods=["delete"], url_path="materiels/(?P<materiel_id>[0-9]+)")
-#     def delete_materiel(self, request, materiel_id=None):
-       
-#         try:
-#            materiel = MaterielStructure.objects.get(id=materiel_id)
-#            materiel.delete()
-#            return Response({"detail": "Deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-#         except MaterielStructure.DoesNotExist:
-#            return Response({"detail": "Materiel not found"}, status=status.HTTP_404_NOT_FOUND)
+#initvalues
+class FosaInitDefaultsViewSet(viewsets.ViewSet):
+    """
+    Endpoints:
+      POST /api/fosa-init/{code_etablissement}/init/   → init one FOSA
+      POST /api/fosa-init/init-all/                    → init ALL FOSA (bulk)
+      GET  /api/fosa-init/{code_etablissement}/status/ → check init status
+      POST /api/fosa-init/{code_etablissement}/reset/  → reset to 0 (keep rows, reset values)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+ 
+    def _init_fosa(self, fosa):
+        """
+        Core logic: create PersonnelStructure, ServiceStructure, MaterielStructure
+        for a FOSA based on its type_structure norms.
+        Uses get_or_create so it's safe to call multiple times — no duplicates.
+        Returns dict with created/skipped counts.
+        """
+        if not fosa.type_structure:
+            return None  # Signal: no type defined
+ 
+        counts = {
+            "personnel": {"created": 0, "skipped": 0},
+            "services":  {"created": 0, "skipped": 0},
+            "materiel":  {"created": 0, "skipped": 0},
+        }
+ 
+        # ── Personnel ──────────────────────────────────────
+        for norme in NormePersonnel.objects.filter(type_structure=fosa.type_structure):
+            _, created = PersonnelStructure.objects.get_or_create(
+                structure=fosa,
+                intitule_poste=norme.intitule_poste,
+                defaults={"nombre_reel": 0},
+            )
+            if created:
+                counts["personnel"]["created"] += 1
+            else:
+                counts["personnel"]["skipped"] += 1
+ 
+        # ── Services ───────────────────────────────────────
+        for norme in NormeService.objects.filter(type_structure=fosa.type_structure):
+            _, created = ServiceStructure.objects.get_or_create(
+                structure=fosa,
+                nom_service=norme.nom_service,
+                defaults={"disponible": False},
+            )
+            if created:
+                counts["services"]["created"] += 1
+            else:
+                counts["services"]["skipped"] += 1
+ 
+        # ── Matériel ───────────────────────────────────────
+        for norme in NormeMateriel.objects.filter(type_structure=fosa.type_structure):
+            _, created = MaterielStructure.objects.get_or_create(
+                structure=fosa,
+                nom_materiel=norme.nom_materiel,
+                defaults={"quantite_reelle": 0},
+            )
+            if created:
+                counts["materiel"]["created"] += 1
+            else:
+                counts["materiel"]["skipped"] += 1
+ 
+        return counts
+    # ──────────────────────────────────────────────────────
+    # POST /api/fosa-init/{code}/init/
+    # Initialize one FOSA
+    # ──────────────────────────────────────────────────────
+    @action(detail=True, methods=["post"], url_path="init")
+    @transaction.atomic
+    def init_one(self, request, pk=None):
+        try:
+            fosa = FOSA.objects.select_related("type_structure").get(
+                code_etablissement=pk
+            )
+        except FOSA.DoesNotExist:
+            return Response(
+                {"detail": f"FOSA '{pk}' introuvable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+ 
+        counts = self._init_fosa(fosa)
+ 
+        if counts is None:
+            return Response(
+                {
+                    "detail": "Type de structure non défini pour cette FOSA. Veuillez d'abord assigner un type.",
+                    "fosa": pk,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+ 
+        total_created = sum(v["created"] for v in counts.values())
+ 
+        return Response(
+            {
+                "detail": "Initialisation réussie." if total_created > 0 else "Déjà initialisé — aucune nouvelle entrée.",
+                "fosa": fosa.code_etablissement,
+                "type_structure": fosa.type_structure.code,
+                "created": {k: v["created"] for k, v in counts.items()},
+                "skipped": {k: v["skipped"] for k, v in counts.items()},
+            },
+            status=status.HTTP_200_OK,
+        )
+ 
+    # ──────────────────────────────────────────────────────
+    # POST /api/fosa-init/init-all/
+    # Bulk init ALL FOSA (or filtered by type_structure)
+    # Optional query param: ?type_structure=CSA
+    # ──────────────────────────────────────────────────────
+    @action(detail=False, methods=["post"], url_path="init-all")
+    @transaction.atomic
+    def init_all(self, request):
+        type_code = request.query_params.get("type_structure")
+ 
+        qs = FOSA.objects.select_related("type_structure").all()
+        if type_code:
+            qs = qs.filter(type_structure__code__iexact=type_code)
+ 
+        total_fosas = qs.count()
+        if total_fosas == 0:
+            return Response(
+                {"detail": "Aucune FOSA trouvée."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+ 
+        results = {
+            "total_fosas": total_fosas,
+            "initialized": 0,
+            "skipped_no_type": 0,
+            "created": {"personnel": 0, "services": 0, "materiel": 0},
+            "skipped": {"personnel": 0, "services": 0, "materiel": 0},
+            "errors": [],
+        }
+ 
+        for fosa in qs:
+            try:
+                counts = self._init_fosa(fosa)
+                if counts is None:
+                    results["skipped_no_type"] += 1
+                    continue
+ 
+                results["initialized"] += 1
+                for key in ["personnel", "services", "materiel"]:
+                    results["created"][key] += counts[key]["created"]
+                    results["skipped"][key] += counts[key]["skipped"]
+ 
+            except Exception as e:
+                results["errors"].append(
+                    {"fosa": fosa.code_etablissement, "error": str(e)}
+                )
+ 
+        return Response(results, status=status.HTTP_200_OK)
+ 
+    # ──────────────────────────────────────────────────────
+    # GET /api/fosa-init/{code}/status/
+    # Check how many normes are filled vs total for a FOSA
+    # ──────────────────────────────────────────────────────
+    @action(detail=True, methods=["get"], url_path="status")
+    def status(self, request, pk=None):
+        try:
+            fosa = FOSA.objects.select_related("type_structure").get(
+                code_etablissement=pk
+            )
+        except FOSA.DoesNotExist:
+            return Response(
+                {"detail": f"FOSA '{pk}' introuvable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+ 
+        if not fosa.type_structure:
+            return Response(
+                {"detail": "Type de structure non défini.", "fosa": pk},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+ 
+        ts = fosa.type_structure
+ 
+        # Norme totals (what SHOULD exist)
+        norme_personnel_count = NormePersonnel.objects.filter(type_structure=ts).count()
+        norme_service_count   = NormeService.objects.filter(type_structure=ts).count()
+        norme_materiel_count  = NormeMateriel.objects.filter(type_structure=ts).count()
+ 
+        # Actual totals (what EXISTS for this FOSA)
+        actual_personnel = PersonnelStructure.objects.filter(structure=fosa)
+        actual_services  = ServiceStructure.objects.filter(structure=fosa)
+        actual_materiel  = MaterielStructure.objects.filter(structure=fosa)
+ 
+        # How many have real values > 0 or disponible=True
+        filled_personnel = actual_personnel.filter(nombre_reel__gt=0).count()
+        filled_services  = actual_services.filter(disponible=True).count()
+        filled_materiel  = actual_materiel.filter(quantite_reelle__gt=0).count()
+ 
+        total_normes = norme_personnel_count + norme_service_count + norme_materiel_count
+        total_actual = actual_personnel.count() + actual_services.count() + actual_materiel.count()
+        total_filled = filled_personnel + filled_services + filled_materiel
+ 
+        is_initialized = total_actual >= total_normes and total_normes > 0
+        fill_pct = round((total_filled / total_normes * 100)) if total_normes > 0 else 0
+ 
+        return Response({
+            "fosa": fosa.code_etablissement,
+            "type_structure": ts.code,
+            "is_initialized": is_initialized,
+            "fill_percentage": fill_pct,
+            "personnel": {
+                "norme_total": norme_personnel_count,
+                "actual_total": actual_personnel.count(),
+                "filled": filled_personnel,
+            },
+            "services": {
+                "norme_total": norme_service_count,
+                "actual_total": actual_services.count(),
+                "filled": filled_services,
+            },
+            "materiel": {
+                "norme_total": norme_materiel_count,
+                "actual_total": actual_materiel.count(),
+                "filled": filled_materiel,
+            },
+        })
+ 
+    # ──────────────────────────────────────────────────────
+    # POST /api/fosa-init/{code}/reset/
+    # Reset all real values to 0 (keeps rows, resets numbers)
+    # Useful when you want to re-enter data from scratch
+    # ──────────────────────────────────────────────────────
+    @action(detail=True, methods=["post"], url_path="reset")
+    @transaction.atomic
+    def reset_one(self, request, pk=None):
+        try:
+            fosa = FOSA.objects.get(code_etablissement=pk)
+        except FOSA.DoesNotExist:
+            return Response(
+                {"detail": f"FOSA '{pk}' introuvable."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+ 
+        p_count = PersonnelStructure.objects.filter(structure=fosa).update(nombre_reel=0)
+        s_count = ServiceStructure.objects.filter(structure=fosa).update(disponible=False)
+        m_count = MaterielStructure.objects.filter(structure=fosa).update(quantite_reelle=0)
+ 
+        return Response({
+            "detail": "Valeurs réinitialisées à zéro.",
+            "fosa": pk,
+            "reset": {
+                "personnel": p_count,
+                "services": s_count,
+                "materiel": m_count,
+            },
+        })
+ 
+ 
