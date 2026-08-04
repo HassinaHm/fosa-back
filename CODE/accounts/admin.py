@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 
-from .models import Task, User, Role
+from .models import AccessRequest, Task, User, Role
 
 admin.site.register(Task)
 
@@ -13,6 +13,11 @@ class RoleAdmin(admin.ModelAdmin):
     filter_horizontal = ("permissions",)  
     ordering = ("nom",)
 
+@admin.register(AccessRequest)
+class AccessRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "full_name","email","wilaya","moughataa","fosa_code","status","created_at")
+    list_filter = ("id", "wilaya", "moughataa")
+    search_fields = ("full_name",)
 
 class CustomUserAdmin(BaseUserAdmin):
     """Admin personnalisé pour User basé sur AbstractBaseUser + PermissionsMixin"""

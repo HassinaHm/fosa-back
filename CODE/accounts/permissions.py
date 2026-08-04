@@ -69,18 +69,17 @@ class FOSARolePermission(BasePermission):
 
             if not (moughataa_ok and wilaya_ok):
                 return False
-
             # si une commune est définie pour l’utilisateur, restreindre encore
             # if user.commune_fk_id:
             #     return obj.commune_fk_id == user.commune_fk_id
-
             return True
 
-        # === Utilisateur public ===
-        if role_name == "Utilisateurs publics":
-            return obj.is_public
-
-        return False
+        if role_name == "rapporteur":
+          if not user.fosa_fk_id:
+             return False
+        return obj.code_etablissement == user.fosa_fk_id
+                     
+        
 
 class CustomModelPermissions(BasePermission):
     """

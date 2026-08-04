@@ -1,5 +1,6 @@
 # accounts/models.py
 from django.db import models
+from django.utils import timezone
 from django.contrib.auth.models import (
     AbstractBaseUser, BaseUserManager, PermissionsMixin, Permission
 )
@@ -16,7 +17,6 @@ FOSA_COMMUNE  = "fosa.Commune"
 class Role(models.Model):
     nom = models.CharField(max_length=255, unique=True, db_index=True)
     description = models.TextField(max_length=200, null=True, blank=True)
-    # Table M2M standard vers Permission (AUCUN 'through' personnalisé)
     permissions = models.ManyToManyField(Permission, blank=True, related_name="roles")
 
     created_at = models.DateTimeField(default=timezone.now, editable=False)
@@ -57,9 +57,8 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
+    #fosa field
     email = models.EmailField(unique=True)
-
-    # Rôle dynamique (RBAC)
     role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name="users")
 
     extra_permissions = models.ManyToManyField(
@@ -74,6 +73,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     email_verified = models.BooleanField(default=False)
+    # ── Mobile / Rapporteur fields ──
+    full_name     = models.CharField(max_length=255, blank=True)
+    matricule     = models.CharField(max_length=100, blank=True)
+    fosa_code     = models.CharField(max_length=50, blank=True)   # FOSA they report from
+    fosa_fk       = models.ForeignKey("fosa.FOSA", null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name="rapporteurs")
+ 
+    # ── PIN fields ──
+    pin_code          = models.CharField(max_length=4, null=True, blank=True, unique=True)
+    pin_generated_at  = models.DateTimeField(null=True, blank=True)
+    pin_active        = models.BooleanField(default=False)  # False until approved
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
@@ -109,6 +119,54 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Autorise l'accès au module admin si is_staff
         return self.is_staff
 
+
+class AccessRequest(models.Model):
+    """
+    Rapporteur submits this from the mobile app before getting a PIN.
+    A gestionnaire local or regional then approves or rejects it.
+    """
+    STATUS_PENDING  = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+ 
+    STATUS_CHOICES = [
+        (STATUS_PENDING,  "En attente"),
+        (STATUS_APPROVED, "Approuvé"),
+        (STATUS_REJECTED, "Rejeté"),
+    ]
+ 
+    # ── Rapporteur info (submitted from mobile, before account exists) ──
+    full_name  = models.CharField(max_length=255)
+    matricule  = models.CharField(max_length=100)
+    email      = models.EmailField()
+ 
+    # ── Geographic scope ──
+    wilaya     = models.ForeignKey("fosa.Wilaya",    null=True, blank=True, on_delete=models.SET_NULL)
+    moughataa  = models.ForeignKey("fosa.Moughataa", null=True, blank=True, on_delete=models.SET_NULL)
+    fosa_code  = models.CharField(max_length=50, blank=True)
+    fosa_fk    = models.ForeignKey("fosa.FOSA",      null=True, blank=True, on_delete=models.SET_NULL)
+ 
+    # ── Status ──
+    status        = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    reviewed_by   = models.ForeignKey("accounts.User", null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name="reviewed_requests")
+    reviewed_at   = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+ 
+    # ── Created user after approval ──
+    user          = models.OneToOneField("accounts.User", null=True, blank=True,
+                                          on_delete=models.SET_NULL, related_name="access_request")
+ 
+    created_at    = models.DateTimeField(auto_now_add=True)
+ 
+    class Meta:
+        verbose_name = "Demande d'accès"
+        verbose_name_plural = "Demandes d'accès"
+        ordering = ["-created_at"]
+ 
+    def __str__(self):
+        return f"{self.full_name} ({self.matricule}) — {self.status}"
+ 
 
 class EmailVerification(models.Model):
     email = models.EmailField()

@@ -249,8 +249,55 @@ class TaskSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+#mobile field
+
+from rest_framework import serializers
+
+from accounts.models import AccessRequest
+class AccessRequestCreateSerializer(serializers.ModelSerializer):
+    fosa_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+    class Meta:
+        model = AccessRequest  # ✅ uncomment/add this
+        fields = [
+            "id", "full_name", "matricule", "email",
+            "wilaya", "moughataa", "fosa_code",
+        ]
+
+    def validate_fosa_code(self, value):
+        if value:
+            from fosa.models import FOSA
+            if not FOSA.objects.filter(code_etablissement=value).exists():
+                raise serializers.ValidationError(
+                    f"Aucune FOSA trouvée avec le code '{value}'."
+                )
+        return value
+
+    def validate_email(self, value):
+        if AccessRequest.objects.filter(email=value, status="pending").exists():
+            raise serializers.ValidationError(
+                "Une demande est déjà en attente pour cet email."
+            )
+        return value
 
 
+class AccessRequestAdminSerializer(serializers.ModelSerializer):
+    reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True)
+    wilaya_nom        = serializers.CharField(source="wilaya.nom", read_only=True)
+    moughataa_nom     = serializers.CharField(source="moughataa.nom", read_only=True)
+    pin_code          = serializers.CharField(source="user.pin_code", read_only=True)
+
+    class Meta:
+        model = AccessRequest  # ✅ this too
+        fields = [
+            "id", "full_name", "matricule", "email",
+            "wilaya", "wilaya_nom", "moughataa", "moughataa_nom",
+            "fosa_code", "status", "rejection_reason",
+            "reviewed_by_email", "reviewed_at",
+            "pin_code", "created_at",
+        ]
+        read_only_fields = ["status", "reviewed_by", "reviewed_at", "user"]
+ 
 
 
 

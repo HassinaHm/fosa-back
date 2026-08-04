@@ -7,7 +7,8 @@ from .views_auth import RegisterView
 
 from rest_framework.routers import DefaultRouter
 from .views import GeoImportView, WilayaViewSet, MoughataaViewSet, CommuneViewSet
-
+from accounts.views import AccessRequestViewSet, verify_pin_view
+ 
 from .views import (
     TypeStructureViewSet,
     NormePersonnelViewSet, NormeServiceViewSet, NormeMaterielViewSet

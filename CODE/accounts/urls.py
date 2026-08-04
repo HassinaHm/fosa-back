@@ -1,7 +1,7 @@
 # accounts/urls.py
 from django.urls import path
 from rest_framework.routers import DefaultRouter
-from .views import PermissionViewSet, RoleViewSet, TaskViewSet, UserViewSet
+from .views import PermissionViewSet, RoleViewSet, TaskViewSet, UserViewSet,AccessRequestViewSet,verify_pin_view
 from . import views
 
 router = DefaultRouter()
@@ -9,6 +9,7 @@ router.register(r"roles", RoleViewSet, basename="role")
 router.register(r"users", UserViewSet, basename="user")
 router.register(r"permissions", PermissionViewSet, basename="permission")
 router.register(r'tasks', TaskViewSet ,basename="tasks")
+router.register(r"access-requests", AccessRequestViewSet, basename="access-requests")
 
 
 urlpatterns = router.urls + [
@@ -20,6 +21,8 @@ urlpatterns = router.urls + [
     path("forgot-password/", views.forgot_password_view, name="forgot-password"),
     path("verify-reset-code/", views.verify_reset_code_view, name="verify-reset-code"),
     path("reset-password/", views.reset_password_view, name="reset-password"),
+    path("verify-pin/", verify_pin_view, name="verify-pin"),
+
     # path("tasks/", views.TaskViewSet, name="reset-password"),
 
 ]

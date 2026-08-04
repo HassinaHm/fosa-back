@@ -1,3 +1,4 @@
+from django.utils import timezone 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.http import HttpResponse
@@ -16,7 +17,8 @@ from .serializers import (
     UserProfileSerializer,
     ForgotPasswordSerializer,
     VerifyResetCodeSerializer,
-    ResetPasswordSerializer
+    ResetPasswordSerializer,AccessRequestCreateSerializer,
+    AccessRequestAdminSerializer
 )
 import random
 
@@ -130,17 +132,217 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-
-
-
-
-
-
 def generate_verification_code():
-    return str(random.randint(100000, 999999))
+    """Generate a 4-digit PIN not used by any active user"""
+    from accounts.models import User
+    for _ in range(100):
+        code = str(random.randint(1000, 9999))
+        if not User.objects.filter(pin_code=code, pin_active=True).exists():
+            return code
+    raise Exception("Impossible de générer un PIN unique")
+ 
+class AccessRequestViewSet(viewsets.ModelViewSet):
+    """
+    list/retrieve/approve/reject for gestionnaires
+    create for mobile (no auth)
+    """
+ 
+    def get_permissions(self):
+        if self.action == "create":
+            return [AllowAny()]
+        return [IsAuthenticated()]
+ 
+    def get_serializer_class(self):
+        from accounts.serializers import AccessRequestCreateSerializer, AccessRequestAdminSerializer
+        if self.action == "create":
+            return AccessRequestCreateSerializer
+        return AccessRequestAdminSerializer
+ 
+    def get_queryset(self):
+        from accounts.models import AccessRequest
+        qs = AccessRequest.objects.select_related(
+            "wilaya", "moughataa", "reviewed_by", "user"
+        ).all()
+ 
+        user = self.request.user
+        if not user.is_authenticated:
+            return qs.none()
+        if user.is_superuser:
+            return qs
+ 
+        role = getattr(getattr(user, "role", None), "nom", None)
+ 
+        if role == "Administrateur national":
+            return qs
+ 
+        if role == "gestionnaire régional":
+            wilaya_ids = list(user.wilayas.values_list("id", flat=True))
+            return qs.filter(wilaya_id__in=wilaya_ids)
+ 
+        if role == "gestionnaire local":
+            return qs.filter(moughataa_id=user.moughataa_fk_id)
+ 
+        # ✅ FIXED: rapporteur sees only their own access request
+        if role == "rapporteur":
+            return qs.filter(email=user.email)
+ 
+        return qs.none()
 
+    def perform_create(self, serializer):
+        fosa_code = serializer.validated_data.get("fosa_code", "").strip()
+        fosa_fk = None
+ 
+        if fosa_code:
+            try:
+                from fosa.models import FOSA
+                # ✅ FOSA uses code_etablissement as PK — look up by that
+                fosa_fk = FOSA.objects.get(code_etablissement=fosa_code)
+            except FOSA.DoesNotExist:
+                fosa_fk = None  # Don't fail — just save without FK
+ 
+        serializer.save(
+            fosa_fk=fosa_fk,
+            fosa_code=fosa_code,  # ✅ also save the raw string
+        )
+ 
+ 
+    # ── POST /api/access-requests/{id}/approve/ ──────────────────────
+    @decorators.action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        from accounts.models import AccessRequest, User, Role
+        req = self.get_object()
+ 
+        if req.status != AccessRequest.STATUS_PENDING:
+            return Response(
+                {"detail": "Cette demande a déjà été traitée."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+ 
+        email = req.email
+ 
+        # ✅ get_or_create the user
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "full_name": req.full_name,
+                "matricule": req.matricule,
+                # ✅ fosa_code is a CharField — store code_etablissement string
+                "fosa_code": req.fosa_code or (
+                    req.fosa_fk.code_etablissement if req.fosa_fk else ""
+                ),
+                "is_active": True,
+            }
+        )
+ 
+        if not created:
+            # Update existing user fields if already exists
+            user.full_name = req.full_name
+            user.matricule = req.matricule
+            user.fosa_code = req.fosa_code or (
+                req.fosa_fk.code_etablissement if req.fosa_fk else ""
+            )
+ 
+        # Assign rapporteur role
+        try:
+            rapporteur_role = Role.objects.get(nom="rapporteur")
+            user.role = rapporteur_role
+        except Role.DoesNotExist:
+            pass  # Role not created yet — warn admin
+ 
+        # Assign geographic scope
+        if req.wilaya:
+            user.wilayas.add(req.wilaya)
+        if req.moughataa:
+            user.moughataa_fk = req.moughataa
+ 
+        # ✅ Link fosa_fk properly using code_etablissement PK
+        if req.fosa_fk:
+            user.fosa_fk = req.fosa_fk
+        elif req.fosa_code:
+            try:
+                from fosa.models import FOSA
+                user.fosa_fk = FOSA.objects.get(code_etablissement=req.fosa_code)
+                user.fosa_code = req.fosa_code
+            except FOSA.DoesNotExist:
+                pass
+ 
+        # Generate unique PIN
+        pin = generate_verification_code()
+        user.pin_code         = pin
+        user.pin_generated_at = timezone.now()
+        user.pin_active       = True
+        user.save()
+ 
+        # Update access request
+        req.status      = AccessRequest.STATUS_APPROVED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.user        = user
+        req.save()
+ 
+        return Response({
+            "detail":   "Demande approuvée. Compte rapporteur créé.",
+            "pin_code": pin,
+            "user_id":  user.id,
+            "email":    user.email,
+            "fosa":     user.fosa_code,
+        }, status=status.HTTP_200_OK)
+
+ 
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def verify_pin_view(request):
+    from accounts.models import User
+    from datetime import timedelta
+ 
+    pin_code = request.data.get("pin_code", "").strip()
+ 
+    if not pin_code or len(pin_code) != 4:
+        return Response({"detail": "Code PIN invalide (4 chiffres requis)"}, status=400)
+ 
+    try:
+        user = User.objects.select_related(
+            "role", "moughataa_fk", "fosa_fk"
+        ).get(
+            pin_code=pin_code,
+            pin_active=True,
+            is_active=True,
+        )
+    except User.DoesNotExist:
+        return Response({"detail": "Code incorrect ou accès révoqué"}, status=401)
+ 
+    # Expire after 90 days
+    if user.pin_generated_at:
+        if timezone.now() - user.pin_generated_at > timedelta(days=90):
+            return Response(
+                {"detail": "Code expiré. Contactez votre gestionnaire."},
+                status=401
+            )
+ 
+    refresh = RefreshToken.for_user(user)
+ 
+    # ✅ fosa_code is a CharField — read directly
+    # fosa_fk.code_etablissement is the PK string if FK is set
+    fosa_code = (
+        user.fosa_code
+        or (user.fosa_fk.code_etablissement if user.fosa_fk else "")
+    )
+ 
+    return Response({
+        "access":    str(refresh.access_token),
+        "refresh":   str(refresh),
+        "full_name": user.full_name or user.email,
+        "email":     user.email,
+        "role":      getattr(getattr(user, "role", None), "nom", "rapporteur"),
+        "wilaya":    user.wilayas.first().nom if user.wilayas.exists() else "",
+        "moughataa": getattr(user.moughataa_fk, "nom", "") or "",
+        "fosa_code": fosa_code,
+    }, status=200)
+
+
+ 
+ 
 def send_verification_email(email, code):
     subject = 'Votre code de vérification'
     message = f'Votre code de vérification est : {code}'

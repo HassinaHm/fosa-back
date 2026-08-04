@@ -66,6 +66,7 @@ class MaladieReportSerializer(serializers.ModelSerializer):
             "moughataa", "moughataa_nom",
             "maladie", "maladie_nom",
             "cas_suspects", "deces", "cas_preleves", "cas_testes", "cas_confirmes",
+            "status","submitted_by","validated_by","validated_at"
         ]
 
 
