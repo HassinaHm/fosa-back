@@ -1,3 +1,5 @@
+from django.db import transaction
+
 from accounts.permissions import CustomModelPermissions, FOSARolePermission
 from rest_framework import viewsets, permissions, serializers, generics, status
 from rest_framework.decorators import action
@@ -461,8 +463,6 @@ class GeoImportView(APIView):
             logger.error(f"Erreur import géo: {e}")
             return Response({"error": str(e)}, status=400)
 
-<<<<<<< HEAD
-=======
 
 
 # Maladie Views
@@ -511,149 +511,10 @@ class MaladieReportViewSet(viewsets.ModelViewSet):
 # Import/Export
 
 
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
 class FOSAResource(resources.ModelResource):
     class Meta:
         model = FOSA
 
-<<<<<<< HEAD
-    TYPE_MAPPING = {
-        'poste de santé': 'PS',
-        'PS': 'PS',
-        'centre de santé': 'CS',
-        'CS': 'CS',
-        'CH': 'CH',
-        'direction régionale de santé': 'DRS',
-        'DRS': 'DRS',
-        'direction centrale': 'DAF',
-        'DAF': 'DAF',
-        'FOND': 'FOND',
-        'autres': 'AUTRE',
-    }
-
-    # ------------------------------------------------------------
-    # Helpers de nettoyage
-    # ------------------------------------------------------------
-    def parse_bool(self, value):
-        if value is None:
-            return None
-        s = str(value).strip().lower()
-        if s in ('1', 'true', 'vrai', 'oui', 'y', 'yes'):
-            return True
-        if s in ('0', 'false', 'faux', 'non', 'n', 'no'):
-            return False
-        return None
-
-    def parse_list(self, value):
-        if value is None:
-            return []
-        s = str(value).strip()
-        if not s:
-            return []
-        if s.startswith('[') and s.endswith(']'):
-            try:
-                obj = json.loads(s)
-                if isinstance(obj, list):
-                    return obj
-            except:
-                pass
-        if ';' in s:
-            return [x.strip() for x in s.split(';') if x.strip()]
-        if ',' in s:
-            return [x.strip() for x in s.split(',') if x.strip()]
-        return [s]
-
-    def clean_type(self, raw_value):
-        if not raw_value:
-            return "AUTRE"
-        value = str(raw_value).strip().replace("é", "e")
-        return self.TYPE_MAPPING.get(value, "AUTRE")
-
-    def clean_coordinates(self, row):
-        lat = row.get('latitude', '')
-        lon = row.get('longitude', '')
-        if lat in ('', ',', 'nan', 'none', None, 'None'):
-            row['latitude'] = None
-        else:
-            try:
-                if isinstance(lat, str):
-                    row['latitude'] = float(lat.strip())
-                else:
-                    row['latitude'] = float(lat)
-            except (ValueError, TypeError):
-                raise ValueError(f"Latitude invalide : {lat}")
-
-        if lon in ('', ',', 'nan', 'none', None, 'None'):
-            row['longitude'] = None
-        else:
-            try:
-                if isinstance(lon, str):
-                    row['longitude'] = float(lon.strip())
-                else:
-                    row['longitude'] = float(lon)
-            except (ValueError, TypeError):
-                raise ValueError(f"Longitude invalide : {lon}")
-
-    # ------------------------------------------------------------
-    # Avant importation de chaque ligne
-    # ------------------------------------------------------------
-    def before_import_row(self, row, **kwargs):
-        # Type
-        row['type'] = self.clean_type(row.get('type'))
-        # Coordonnées
-        self.clean_coordinates(row)
-        # Booléens
-        for bf in ['cloture', 'electricite', 'internet', 'eau', 'cdf']:
-            row[bf] = self.parse_bool(row.get(bf))
-
-        # Listes JSON
-        row['prestation_service'] = self.parse_list(row.get('prestation_service'))
-        row['service_manquant'] = self.parse_list(row.get('service_manquant'))
-
-        # Remplir structure si vide mais nom_fr présent 
-        if not row.get('structure') and row.get('nom_fr'):
-            row['structure'] = row['nom_fr']
-
-        # Validation obligatoire
-        if not row.get('structure') and not row.get('nom_fr') and not row.get('nom_ar'):
-            raise ValueError("Il faut au moins structure, nom_fr ou nom_ar")
-        for field in ['commune', 'moughataa', 'wilaya']:
-            if not row.get(field):
-                raise ValueError(f"Le champ {field} est obligatoire")
-
-    # ------------------------------------------------------------
-    # Avant sauvegarde de l'instance
-    # ------------------------------------------------------------
-    def before_save_instance(self, instance, *args, **kwargs):
-        # Public / privé
-        instance.is_public = instance.type in [
-            'PS', 'CS', 'CH', 'Poste de Santé', 'Centre de Santé', 'Centre hospitalier'
-        ]
-
-        # Résolution du type_structure (par code ou libellé)
-        ts_val = getattr(instance, 'type_structure', None)
-        if ts_val and not isinstance(ts_val, TypeStructure):
-            ts = TypeStructure.objects.filter(code=ts_val).first() \
-                  or TypeStructure.objects.filter(libelle=ts_val).first()
-            instance.type_structure = ts
-
-        # Remplir structure si manquant (par nom_fr)
-        if not instance.structure and instance.nom_fr:
-            instance.structure = instance.nom_fr
-            
-    def get_instance(self, instance_loader, row):
-        try:
-            code = row.get('code_etablissement')
-            if code:
-                return self._meta.model.objects.get(code_etablissement=code)
-        except self._meta.model.DoesNotExist:
-            return None
-        return None
-    
-      
-from django.db import transaction
-=======
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
 
 # ============================================================
 # FOSA VIEWSET
@@ -715,15 +576,9 @@ class FOSAViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         return qs.filter(is_public=True)
-<<<<<<< HEAD
-    # ============================================================
-    # HISTORIQUE
-    # ============================================================
-=======
     # ------------------------------------------------------------
     # Historique
     # ------------------------------------------------------------
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
     def perform_create(self, serializer):
         instance = serializer.save()
         self._create_history(instance, 'CREATE', {})
@@ -750,19 +605,12 @@ class FOSAViewSet(viewsets.ModelViewSet):
             action=action,
             changes=changes
         )
-<<<<<<< HEAD
 
     # ============================================================
     # IMPORT / EXPORT
     # ============================================================
     @action(detail=False, methods=["post"], url_path="import_data")
     @transaction.atomic
-=======
-    # ============================================================
-    # Import / Export
-    # ============================================================
-    @action(detail=False, methods=['post'])
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
     def import_data(self, request):
         file = request.FILES.get("file")
         if not file:
@@ -907,14 +755,9 @@ class FOSAViewSet(viewsets.ModelViewSet):
         resp = HttpResponse(dataset.xlsx, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         resp['Content-Disposition'] = 'attachment; filename="fosas_export.xlsx"'
         return resp
-<<<<<<< HEAD
 
     # ============================================================
     # PERSONNEL ACTIONS
-=======
-    # ============================================================
-    # Actions pour les normes (personnel, services, matériel)
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
     # ============================================================
     @action(detail=True, methods=["get"])
     def personnels(self, request, code_etablissement=None):
@@ -995,12 +838,8 @@ class FOSAViewSet(viewsets.ModelViewSet):
             )
             saved.append(MaterielStructureSerializer(obj).data)
         return Response(saved, status=200)
-<<<<<<< HEAD
 
     # CONFORMITY REPORT
-=======
-    
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
     @action(detail=False, methods=["get"], url_path="conformity-report")
     def conformity_report(self, request):
         """Calculate conformity percentage for each structure"""
@@ -1024,12 +863,8 @@ class FOSAViewSet(viewsets.ModelViewSet):
                 continue
 
             # ✅ PERSONNEL: Compare PersonnelStructure with NormePersonnel
-<<<<<<< HEAD
             from .models import NormePersonnel, NormeService, NormeMateriel, PersonnelStructure, ServiceStructure, MaterielStructure
             
-=======
-            from .models import NormePersonnel
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
             norme_personnel = NormePersonnel.objects.filter(type_structure=fosa.type_structure)
             actual_personnel = PersonnelStructure.objects.filter(structure=fosa)
             
@@ -1079,7 +914,6 @@ class FOSAViewSet(viewsets.ModelViewSet):
                 }
             })
 
-<<<<<<< HEAD
         return Response(conformity_data)  
     ###--------------
     #MOBILE SECTION
@@ -1141,12 +975,6 @@ class FOSAViewSet(viewsets.ModelViewSet):
         ))
         return Response(data)
  
-=======
-        return Response(conformity_data)
-
-
-# Vue Historique
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
 class FOSAHistorySerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     fosa_code = serializers.CharField(source='fosa.code_etablissement', read_only=True)
@@ -1230,7 +1058,6 @@ def to_list(v):
             return [x.strip() for x in v.split(',')]
     return []
 
-<<<<<<< HEAD
     if ";" in s:
         return [x.strip() for x in s.split(";") if x.strip()]
     if "," in s:
@@ -1557,8 +1384,6 @@ from .models import (
     NormePersonnel, NormeService, NormeMateriel,
     PersonnelStructure, ServiceStructure, MaterielStructure
 )
-=======
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
 
 # ============================================================
 # NORMS VIEWSETS (Normes)
@@ -1618,7 +1443,6 @@ class NormeMaterielViewSet(viewsets.ModelViewSet):
                 pass
         return qs.order_by("nom_materiel")
     
-<<<<<<< HEAD
 #initvalues
 class FosaInitDefaultsViewSet(viewsets.ViewSet):
     """
@@ -1872,19 +1696,3 @@ class FosaInitDefaultsViewSet(viewsets.ViewSet):
         })
  
  
-=======
-from django.db.models import Q
-from rest_framework import viewsets
-
-
-# class StructureSanteViewSet(viewsets.ModelViewSet):
-#     queryset = StructureSante.objects.select_related(
-#         "type_structure", "wilaya_fk", "moughataa_fk", "commune_fk"
-#     ).all()
-#     serializer_class = StructureSanteSerializer
-#     parser_classes = [MultiPartParser]
-#     permission_classes = [permissions.IsAuthenticated ,CustomModelPermissions, FOSARolePermission]
-
-#     def get_queryset(self):
-#         qs = super().get_queryset()
->>>>>>> 6b2d726620d597ab95dfd5d15b012e3ab37cc2ae
